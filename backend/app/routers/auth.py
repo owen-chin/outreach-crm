@@ -9,6 +9,9 @@ from app.services.gmail import SCOPES, get_credentials, save_credentials
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+# Single-user local app — store flow between auth start and callback to preserve code_verifier
+_pending_flow: Flow | None = None
+
 
 def _build_flow() -> Flow:
     return Flow.from_client_config(
@@ -28,19 +31,24 @@ def _build_flow() -> Flow:
 
 @router.get("/google")
 def google_auth_start():
-    flow = _build_flow()
-    auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
+    global _pending_flow
+    _pending_flow = _build_flow()
+    auth_url, _ = _pending_flow.authorization_url(access_type="offline", prompt="consent")
     return {"auth_url": auth_url}
 
 
 @router.get("/google/callback")
 def google_auth_callback(code: str, db: Session = Depends(get_db)):
-    flow = _build_flow()
+    global _pending_flow
+    if not _pending_flow:
+        raise HTTPException(status_code=400, detail="No pending OAuth flow — visit /api/auth/google first")
     try:
-        flow.fetch_token(code=code)
+        _pending_flow.fetch_token(code=code)
     except Exception as e:
+        _pending_flow = None
         raise HTTPException(status_code=400, detail=f"OAuth token exchange failed: {e}")
-    save_credentials(db, flow.credentials)
+    save_credentials(db, _pending_flow.credentials)
+    _pending_flow = None
     return RedirectResponse(url=f"{settings.frontend_url}?gmail=connected")
 
 

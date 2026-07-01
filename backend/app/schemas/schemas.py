@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date as Date, datetime
 from typing import Optional
 from pydantic import BaseModel
 from app.models.models import ContactStatus
@@ -8,7 +8,7 @@ from app.models.models import ContactStatus
 
 class ProjectBase(BaseModel):
     name: str
-    date: Optional[date] = None
+    date: Optional[Date] = None
     description: Optional[str] = None
 
 
@@ -18,7 +18,7 @@ class ProjectCreate(ProjectBase):
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = None
-    date: Optional[date] = None
+    date: Optional[Date] = None
     description: Optional[str] = None
 
 
