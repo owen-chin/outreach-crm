@@ -56,24 +56,28 @@ def save_credentials(db: Session, creds: Credentials) -> None:
     db.commit()
 
 
-def send_email(creds: Credentials, to: str, subject: str, body: str) -> tuple[str, str]:
+def send_email(creds: Credentials, to: str, subject: str, body: str, cc: list[str] = []) -> tuple[str, str]:
     """Returns (message_id, thread_id)."""
     service = build("gmail", "v1", credentials=creds)
     message = MIMEText(body)
     message["to"] = to
     message["subject"] = subject
+    if cc:
+        message["cc"] = ", ".join(cc)
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     sent = service.users().messages().send(userId="me", body={"raw": raw}).execute()
     return sent["id"], sent["threadId"]
 
 
-def reply_email(creds: Credentials, thread_id: str, to: str, subject: str, body: str) -> tuple[str, str]:
+def reply_email(creds: Credentials, thread_id: str, to: str, subject: str, body: str, cc: list[str] = []) -> tuple[str, str]:
     """Sends a reply into an existing thread. Returns (message_id, thread_id)."""
     service = build("gmail", "v1", credentials=creds)
     reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
     message = MIMEText(body)
     message["to"] = to
     message["subject"] = reply_subject
+    if cc:
+        message["cc"] = ", ".join(cc)
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     sent = service.users().messages().send(
         userId="me",

@@ -3,14 +3,17 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getProject, getCategories, createCategory, deleteCategory,
-  getContacts, createContact, updateContact, deleteContact,
-  getTemplates, sendEmail, getEmailLogs,
-  replyEmail, getThread, postGmailImport, searchThreads,
+  getOrgs, createOrg, updateOrg, deleteOrg,
+  addPerson, updatePerson, deletePerson,
+  startEmail, linkThread, getThreadMessages, replyToThread,
+  getTemplates,
+  searchThreads, postGmailImport,
 } from '../api'
 import Modal from '../components/Modal'
-import StatusBadge from '../components/StatusBadge'
 
 const STATUSES = ['not_contacted', 'contacted', 'responded', 'negotiating', 'confirmed', 'declined']
+
+// ── StatusSelect ──────────────────────────────────────────────────────────────
 
 function StatusSelect({ value, onChange, onClick }) {
   const ref = useRef(null)
@@ -30,246 +33,508 @@ function StatusSelect({ value, onChange, onClick }) {
   )
 }
 
-const emptyContactForm = { company_name: '', contact_name: '', email: '', ask_type: '', status: 'not_contacted', notes: '', gmail_thread_link: '' }
+// ── Template rendering (client-side) ─────────────────────────────────────────
 
-function parseThreadId(input) {
-  if (!input) return ''
-  const match = input.match(/#[^/]+\/([A-Za-z0-9]+)/)
-  if (match) return match[1]
-  return input.trim()
+function applyTemplate(subject, body, { orgName, personName, projectName, projectDate }) {
+  const r = (s) => s
+    .replace(/{{company_name}}/g, orgName || '')
+    .replace(/{{contact_name}}/g, personName || '')
+    .replace(/{{project_name}}/g, projectName || '')
+    .replace(/{{project_date}}/g, projectDate || '')
+  return { subject: r(subject), body: r(body) }
 }
 
-// ── Send Email Modal ──────────────────────────────────────────────────────────
+// ── Thread View (messages + reply compose) ────────────────────────────────────
 
-function SendEmailModal({ contact, onClose }) {
-  const [templateId, setTemplateId] = useState('')
-  const [result, setResult] = useState(null)
+function ThreadView({ org, thread, categoryId, onBack }) {
   const qc = useQueryClient()
+  const [replyBody, setReplyBody] = useState('')
+  const [ccPersonIds, setCcPersonIds] = useState([])
 
-  const { data: templates = [] } = useQuery({ queryKey: ['templates'], queryFn: getTemplates })
+  const { data: threadData, isLoading, error } = useQuery({
+    queryKey: ['thread-messages', org.id, thread.id],
+    queryFn: () => getThreadMessages(org.id, thread.id),
+    retry: false,
+  })
 
-  const send = useMutation({
-    mutationFn: () => sendEmail(contact.id, { template_id: Number(templateId) }),
-    onSuccess: (data) => {
-      setResult(data)
-      qc.invalidateQueries(['contacts', contact.category_id])
-      qc.invalidateQueries(['email-logs', contact.id])
+  const reply = useMutation({
+    mutationFn: () => replyToThread(org.id, thread.id, { body: replyBody, cc_person_ids: ccPersonIds }),
+    onSuccess: () => {
+      setReplyBody('')
+      setCcPersonIds([])
+      qc.invalidateQueries({ queryKey: ['thread-messages', org.id, thread.id] })
+      qc.invalidateQueries({ queryKey: ['orgs', categoryId] })
     },
   })
 
-  if (result) {
-    return (
-      <Modal title="Email Sent" onClose={onClose}>
-        <p className="success-msg">Email sent successfully!</p>
-        <div className="email-preview">
-          <p><strong>Subject:</strong> {result.subject}</p>
-          <pre className="email-body">{result.body}</pre>
+  const toggleCc = (id) => setCcPersonIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
+
+  return (
+    <div>
+      <div className="thread-view-header">
+        <button className="btn btn-ghost btn-sm" onClick={onBack}>← Threads</button>
+        <span className="thread-view-subject">{thread.subject || '(no subject)'}</span>
+      </div>
+
+      {isLoading && <p className="muted" style={{ padding: '16px 0' }}>Loading thread...</p>}
+      {error && <p className="error-msg" style={{ padding: '8px 0' }}>{error?.response?.data?.detail ?? 'Could not load thread from Gmail'}</p>}
+
+      {threadData && (
+        <div className="thread-messages">
+          {threadData.messages.map(msg => (
+            <div key={msg.id} className="thread-message">
+              <div className="thread-message-header">
+                <span className="thread-sender">{msg.sender}</span>
+                <span className="muted thread-date">{msg.date}</span>
+              </div>
+              {msg.subject && <div className="thread-subject">{msg.subject}</div>}
+              <p className="thread-snippet">{msg.snippet}</p>
+            </div>
+          ))}
         </div>
+      )}
+
+      <div className="reply-compose">
+        {org.people.filter(p => p.email).length > 0 && (
+          <div style={{ marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>CC</span>
+            <div className="cc-checkboxes">
+              {org.people.filter(p => p.email).map(p => (
+                <label key={p.id} className="cc-checkbox-label">
+                  <input type="checkbox" checked={ccPersonIds.includes(p.id)} onChange={() => toggleCc(p.id)} />
+                  {p.name || p.email}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+        <textarea
+          className="form-input"
+          rows={5}
+          placeholder="Write your reply..."
+          value={replyBody}
+          onChange={e => setReplyBody(e.target.value)}
+        />
+        {reply.isError && <p className="error-msg" style={{ marginTop: 4 }}>{reply.error?.response?.data?.detail ?? 'Reply failed'}</p>}
+        {reply.isSuccess && <p className="success-msg" style={{ marginTop: 4 }}>Reply sent!</p>}
         <div className="form-actions">
-          <button className="btn btn-primary" onClick={onClose}>Done</button>
+          <button
+            className="btn btn-primary"
+            disabled={!replyBody.trim() || reply.isPending}
+            onClick={() => reply.mutate()}
+          >
+            {reply.isPending ? 'Sending...' : 'Send Reply'}
+          </button>
         </div>
-      </Modal>
+      </div>
+    </div>
+  )
+}
+
+// ── Compose View (new email) ──────────────────────────────────────────────────
+
+function ComposeView({ org, project, categoryId, onCancel, onSuccess }) {
+  const qc = useQueryClient()
+  const { data: templates = [] } = useQuery({ queryKey: ['templates'], queryFn: getTemplates })
+
+  const peopleWithEmail = org.people.filter(p => p.email)
+  const [toPersonId, setToPersonId] = useState(peopleWithEmail[0]?.id ?? '')
+  const [ccPersonIds, setCcPersonIds] = useState([])
+  const [subject, setSubject] = useState('')
+  const [body, setBody] = useState('')
+  const [templateId, setTemplateId] = useState('')
+
+  const toPerson = org.people.find(p => p.id === Number(toPersonId))
+
+  const loadTemplate = (tid) => {
+    setTemplateId(tid)
+    if (!tid) return
+    const tmpl = templates.find(t => t.id === Number(tid))
+    if (!tmpl) return
+    const rendered = applyTemplate(tmpl.subject, tmpl.body, {
+      orgName: org.name,
+      personName: toPerson?.name || '',
+      projectName: project?.name || '',
+      projectDate: project?.date || '',
+    })
+    setSubject(rendered.subject)
+    setBody(rendered.body)
+  }
+
+  const send = useMutation({
+    mutationFn: () => startEmail(org.id, {
+      to_person_id: Number(toPersonId),
+      cc_person_ids: ccPersonIds,
+      subject,
+      body,
+    }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['orgs', categoryId] })
+      onSuccess({ id: data.thread_id, gmail_thread_id: data.gmail_thread_id, subject: data.subject, created_at: new Date().toISOString() })
+    },
+  })
+
+  const toggleCc = (id) => setCcPersonIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
+  const ccCandidates = org.people.filter(p => p.email && p.id !== Number(toPersonId))
+
+  return (
+    <div>
+      <div className="thread-view-header">
+        <button className="btn btn-ghost btn-sm" onClick={onCancel}>← Back</button>
+        <span className="thread-view-subject">New Email to {org.name}</span>
+      </div>
+
+      {peopleWithEmail.length === 0 ? (
+        <p className="empty" style={{ padding: '24px 0' }}>No contacts with an email address. Add one in the People tab first.</p>
+      ) : (
+        <div className="form" style={{ marginTop: 16 }}>
+          <label className="form-label">To
+            <select className="form-input" value={toPersonId} onChange={e => setToPersonId(e.target.value)}>
+              {peopleWithEmail.map(p => (
+                <option key={p.id} value={p.id}>{p.name ? `${p.name} (${p.email})` : p.email}</option>
+              ))}
+            </select>
+          </label>
+
+          {ccCandidates.length > 0 && (
+            <div className="form-label">
+              <span>CC</span>
+              <div className="cc-checkboxes">
+                {ccCandidates.map(p => (
+                  <label key={p.id} className="cc-checkbox-label">
+                    <input type="checkbox" checked={ccPersonIds.includes(p.id)} onChange={() => toggleCc(p.id)} />
+                    {p.name ? `${p.name} (${p.email})` : p.email}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <label className="form-label">Load Template (optional)
+            <select className="form-input" value={templateId} onChange={e => loadTemplate(e.target.value)}>
+              <option value="">— pick a template to pre-fill —</option>
+              {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </label>
+
+          <label className="form-label">Subject
+            <input className="form-input" value={subject} onChange={e => setSubject(e.target.value)} placeholder="Subject..." />
+          </label>
+
+          <label className="form-label">Body
+            <textarea className="form-input" rows={9} value={body} onChange={e => setBody(e.target.value)} placeholder="Write your email..." />
+          </label>
+
+          {send.isError && <p className="error-msg">{send.error?.response?.data?.detail ?? 'Failed to send'}</p>}
+
+          <div className="form-actions">
+            <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
+            <button
+              className="btn btn-primary"
+              disabled={!toPersonId || !subject.trim() || !body.trim() || send.isPending}
+              onClick={() => send.mutate()}
+            >
+              {send.isPending ? 'Sending...' : 'Send Email'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Thread List View ──────────────────────────────────────────────────────────
+
+function ThreadListView({ org, categoryId, onCompose, onSelectThread }) {
+  const qc = useQueryClient()
+  const [showLinkForm, setShowLinkForm] = useState(false)
+  const [linkId, setLinkId] = useState('')
+  const [linkSubject, setLinkSubject] = useState('')
+
+  const linkMutation = useMutation({
+    mutationFn: () => linkThread(org.id, { gmail_thread_id: linkId.trim(), subject: linkSubject.trim() || null }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['orgs', categoryId] })
+      setShowLinkForm(false)
+      setLinkId('')
+      setLinkSubject('')
+    },
+  })
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <span className="muted" style={{ fontSize: 12 }}>
+          {org.threads.length} thread{org.threads.length !== 1 ? 's' : ''}
+        </span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-sm btn-ghost" onClick={() => setShowLinkForm(v => !v)}>Link Thread</button>
+          <button className="btn btn-sm btn-primary" onClick={onCompose}>+ New Email</button>
+        </div>
+      </div>
+
+      {showLinkForm && (
+        <div className="link-thread-form">
+          <input className="form-input" placeholder="Gmail Thread ID" value={linkId} onChange={e => setLinkId(e.target.value)} />
+          <input className="form-input" placeholder="Subject (optional)" value={linkSubject} onChange={e => setLinkSubject(e.target.value)} />
+          {linkMutation.isError && <p className="error-msg">{linkMutation.error?.response?.data?.detail ?? 'Link failed'}</p>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowLinkForm(false)}>Cancel</button>
+            <button className="btn btn-primary btn-sm" disabled={!linkId.trim() || linkMutation.isPending} onClick={() => linkMutation.mutate()}>Link</button>
+          </div>
+        </div>
+      )}
+
+      {org.threads.length === 0 && !showLinkForm && (
+        <div className="empty-conversation">
+          <p className="muted">No email threads yet.</p>
+          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={onCompose}>Compose First Email</button>
+        </div>
+      )}
+
+      <div className="thread-card-list">
+        {org.threads.map(thread => (
+          <button key={thread.id} className="thread-card" onClick={() => onSelectThread(thread)}>
+            <span className="thread-card-subject">{thread.subject || '(no subject)'}</span>
+            <span className="thread-card-date muted">{new Date(thread.created_at).toLocaleDateString()}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Conversation Tab ──────────────────────────────────────────────────────────
+
+function ConversationTab({ org, categoryId, project }) {
+  const [view, setView] = useState(() => org.threads.length === 1 ? 'thread' : 'list')
+  const [activeThread, setActiveThread] = useState(() => org.threads.length === 1 ? org.threads[0] : null)
+
+  return (
+    <div>
+      {view === 'list' && (
+        <ThreadListView
+          org={org}
+          categoryId={categoryId}
+          onCompose={() => setView('compose')}
+          onSelectThread={(t) => { setActiveThread(t); setView('thread') }}
+        />
+      )}
+      {view === 'compose' && (
+        <ComposeView
+          org={org}
+          project={project}
+          categoryId={categoryId}
+          onCancel={() => setView('list')}
+          onSuccess={(t) => { setActiveThread(t); setView('thread') }}
+        />
+      )}
+      {view === 'thread' && activeThread && (
+        <ThreadView
+          org={org}
+          thread={activeThread}
+          categoryId={categoryId}
+          onBack={() => setView('list')}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── People Tab ────────────────────────────────────────────────────────────────
+
+function PeopleTab({ org, categoryId }) {
+  const qc = useQueryClient()
+  const [showAdd, setShowAdd] = useState(false)
+  const [addForm, setAddForm] = useState({ name: '', email: '', title: '' })
+  const [editingId, setEditingId] = useState(null)
+  const [editForm, setEditForm] = useState({})
+
+  const add = useMutation({
+    mutationFn: () => addPerson(org.id, addForm),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['orgs', categoryId] })
+      setShowAdd(false)
+      setAddForm({ name: '', email: '', title: '' })
+    },
+  })
+
+  const edit = useMutation({
+    mutationFn: () => updatePerson(org.id, editingId, editForm),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['orgs', categoryId] }); setEditingId(null) },
+  })
+
+  const remove = useMutation({
+    mutationFn: (id) => deletePerson(org.id, id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['orgs', categoryId] }),
+  })
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <span className="muted" style={{ fontSize: 12 }}>
+          {org.people.length} person{org.people.length !== 1 ? 's' : ''}
+        </span>
+        <button className="btn btn-sm btn-ghost" onClick={() => setShowAdd(v => !v)}>+ Add Person</button>
+      </div>
+
+      {org.people.length === 0 && !showAdd && (
+        <p className="empty small">No contacts added yet.</p>
+      )}
+
+      <div className="people-list">
+        {org.people.map(person => (
+          <div key={person.id} className="person-card">
+            {editingId === person.id ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <label className="form-label">Name
+                    <input className="form-input" value={editForm.name ?? ''} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
+                  </label>
+                  <label className="form-label">Email
+                    <input className="form-input" type="email" value={editForm.email ?? ''} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} />
+                  </label>
+                  <label className="form-label" style={{ gridColumn: '1 / -1' }}>Title
+                    <input className="form-input" value={editForm.title ?? ''} onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Marketing Director" />
+                  </label>
+                </div>
+                {edit.isError && <p className="error-msg">{edit.error?.response?.data?.detail ?? 'Save failed'}</p>}
+                <div className="form-actions">
+                  <button className="btn btn-ghost btn-sm" onClick={() => setEditingId(null)}>Cancel</button>
+                  <button className="btn btn-primary btn-sm" disabled={edit.isPending} onClick={() => edit.mutate()}>Save</button>
+                </div>
+              </div>
+            ) : (
+              <div className="person-card-content">
+                <div className="person-info">
+                  <span className="person-name">{person.name || '—'}</span>
+                  {person.title && <span className="person-title">{person.title}</span>}
+                  {person.email && <a className="person-email" href={`mailto:${person.email}`}>{person.email}</a>}
+                </div>
+                <div className="person-actions">
+                  <button className="btn btn-ghost btn-sm" onClick={() => { setEditingId(person.id); setEditForm({ name: person.name || '', email: person.email || '', title: person.title || '' }) }}>Edit</button>
+                  <button className="btn btn-danger btn-sm" onClick={() => { if (confirm(`Remove ${person.name || person.email}?`)) remove.mutate(person.id) }}>Remove</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {showAdd && (
+        <div className="add-person-form">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <label className="form-label">Name
+              <input className="form-input" value={addForm.name} onChange={e => setAddForm(f => ({ ...f, name: e.target.value }))} />
+            </label>
+            <label className="form-label">Email
+              <input className="form-input" type="email" value={addForm.email} onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))} />
+            </label>
+            <label className="form-label" style={{ gridColumn: '1 / -1' }}>Title
+              <input className="form-input" value={addForm.title} onChange={e => setAddForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Marketing Director" />
+            </label>
+          </div>
+          {add.isError && <p className="error-msg">{add.error?.response?.data?.detail ?? 'Failed to add person'}</p>}
+          <div className="form-actions">
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowAdd(false)}>Cancel</button>
+            <button className="btn btn-primary btn-sm" disabled={add.isPending} onClick={() => add.mutate()}>Add Person</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Overview Tab ──────────────────────────────────────────────────────────────
+
+function OverviewTab({ org, categoryId }) {
+  const qc = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const [form, setForm] = useState({ name: org.name, website: org.website || '', ask_type: org.ask_type || '', status: org.status, notes: org.notes || '' })
+
+  useEffect(() => {
+    if (!editing) setForm({ name: org.name, website: org.website || '', ask_type: org.ask_type || '', status: org.status, notes: org.notes || '' })
+  }, [org, editing])
+
+  const update = useMutation({
+    mutationFn: (data) => updateOrg(categoryId, org.id, data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['orgs', categoryId] }); setEditing(false) },
+  })
+
+  if (editing) {
+    return (
+      <form onSubmit={e => { e.preventDefault(); update.mutate({ name: form.name, website: form.website || null, ask_type: form.ask_type || null, status: form.status, notes: form.notes || null }) }} className="form">
+        <label className="form-label">Org Name *
+          <input className="form-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required />
+        </label>
+        <label className="form-label">Website
+          <input className="form-input" value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://..." />
+        </label>
+        <label className="form-label">Ask Type
+          <input className="form-input" value={form.ask_type} onChange={e => setForm(f => ({ ...f, ask_type: e.target.value }))} placeholder="e.g. money, product, paid performance" />
+        </label>
+        <label className="form-label">Status
+          <select className="form-input" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+            {STATUSES.map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+          </select>
+        </label>
+        <label className="form-label">Notes
+          <textarea className="form-input" rows={4} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+        </label>
+        {update.isError && <p className="error-msg">{update.error?.response?.data?.detail ?? 'Save failed'}</p>}
+        <div className="form-actions">
+          <button type="button" className="btn btn-ghost" onClick={() => setEditing(false)}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={update.isPending}>Save</button>
+        </div>
+      </form>
     )
   }
 
   return (
-    <Modal title={`Send Email to ${contact.company_name}`} onClose={onClose}>
-      <div className="form">
-        <label className="form-label">Template
-          <select className="form-input" value={templateId} onChange={e => setTemplateId(e.target.value)}>
-            <option value="">Select a template...</option>
-            {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-        </label>
-        {send.isError && <p className="error-msg">{send.error?.response?.data?.detail ?? 'Send failed'}</p>}
-        <div className="form-actions">
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={!templateId || send.isPending} onClick={() => send.mutate()}>
-            {send.isPending ? 'Sending...' : 'Send'}
-          </button>
-        </div>
+    <div>
+      <dl className="detail-list">
+        <dt>Website</dt>
+        <dd>{org.website ? <a href={org.website} target="_blank" rel="noreferrer">{org.website}</a> : '—'}</dd>
+        <dt>Ask Type</dt><dd>{org.ask_type || '—'}</dd>
+        <dt>Status</dt><dd><span className={`badge badge-${org.status}`}>{org.status.replace(/_/g, ' ')}</span></dd>
+        <dt>Last Contacted</dt><dd>{org.last_contacted_date ? new Date(org.last_contacted_date).toLocaleDateString() : '—'}</dd>
+        <dt>Notes</dt><dd className="notes">{org.notes || '—'}</dd>
+      </dl>
+      <div className="form-actions">
+        <button className="btn btn-ghost" onClick={() => setEditing(true)}>Edit</button>
       </div>
-    </Modal>
+    </div>
   )
 }
 
-// ── Contact Detail Modal ──────────────────────────────────────────────────────
+// ── Org Modal ─────────────────────────────────────────────────────────────────
 
-function ContactModal({ contact, categoryId, onClose }) {
-  const qc = useQueryClient()
-  const [tab, setTab] = useState('details')
-  const [editing, setEditing] = useState(false)
-  const [form, setForm] = useState({ ...contact, gmail_thread_link: contact.gmail_thread_id || '' })
-  const [showSend, setShowSend] = useState(false)
-  const [replyBody, setReplyBody] = useState('')
+function OrgModal({ orgId, categoryId, project, onClose }) {
+  const [tab, setTab] = useState('overview')
 
-  const { data: logs = [] } = useQuery({
-    queryKey: ['email-logs', contact.id],
-    queryFn: () => getEmailLogs(contact.id),
-    enabled: tab === 'history',
+  const { data: org } = useQuery({
+    queryKey: ['orgs', categoryId],
+    queryFn: () => getOrgs(categoryId),
+    select: orgs => orgs?.find(o => o.id === orgId),
   })
 
-  const { data: thread, isLoading: threadLoading, error: threadError } = useQuery({
-    queryKey: ['thread', contact.id],
-    queryFn: () => getThread(contact.id),
-    enabled: tab === 'reply',
-    retry: false,
-  })
-
-  const update = useMutation({
-    mutationFn: (data) => updateContact(categoryId, contact.id, data),
-    onSuccess: () => { qc.invalidateQueries(['contacts', categoryId]); setEditing(false) },
-  })
-
-  const reply = useMutation({
-    mutationFn: () => replyEmail(contact.id, { body: replyBody }),
-    onSuccess: () => {
-      setReplyBody('')
-      qc.invalidateQueries(['thread', contact.id])
-      qc.invalidateQueries(['email-logs', contact.id])
-      qc.invalidateQueries(['contacts', categoryId])
-    },
-  })
-
-  const handleSave = (e) => {
-    e.preventDefault()
-    const { gmail_thread_link, ...rest } = form
-    const threadId = parseThreadId(gmail_thread_link)
-    update.mutate({ ...rest, gmail_thread_id: threadId || null })
-  }
+  if (!org) return null
 
   return (
-    <>
-      <Modal title={contact.company_name} onClose={onClose} wide>
-        <div className="tabs">
-          <button className={`tab ${tab === 'details' ? 'active' : ''}`} onClick={() => setTab('details')}>Details</button>
-          <button className={`tab ${tab === 'history' ? 'active' : ''}`} onClick={() => setTab('history')}>Email History</button>
-          <button className={`tab ${tab === 'reply' ? 'active' : ''}`} onClick={() => setTab('reply')}>Reply</button>
-        </div>
-
-        {tab === 'details' && (
-          editing ? (
-            <form onSubmit={handleSave} className="form">
-              <label className="form-label">Company Name *
-                <input className="form-input" value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))} required />
-              </label>
-              <label className="form-label">Contact Name
-                <input className="form-input" value={form.contact_name ?? ''} onChange={e => setForm(f => ({ ...f, contact_name: e.target.value }))} />
-              </label>
-              <label className="form-label">Email
-                <input className="form-input" type="email" value={form.email ?? ''} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
-              </label>
-              <label className="form-label">Ask Type
-                <input className="form-input" value={form.ask_type ?? ''} onChange={e => setForm(f => ({ ...f, ask_type: e.target.value }))} placeholder="e.g. money, product, paid performance" />
-              </label>
-              <label className="form-label">Status
-                <select className="form-input" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-                  {STATUSES.map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
-                </select>
-              </label>
-              <label className="form-label">Gmail Thread Link
-                <input className="form-input" value={form.gmail_thread_link} onChange={e => setForm(f => ({ ...f, gmail_thread_link: e.target.value }))} placeholder="Paste Gmail URL or raw thread ID" />
-              </label>
-              <label className="form-label">Notes
-                <textarea className="form-input" rows={4} value={form.notes ?? ''} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
-              </label>
-              <div className="form-actions">
-                <button type="button" className="btn btn-ghost" onClick={() => setEditing(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={update.isPending}>Save</button>
-              </div>
-            </form>
-          ) : (
-            <div>
-              <dl className="detail-list">
-                <dt>Contact Name</dt><dd>{contact.contact_name || '—'}</dd>
-                <dt>Email</dt><dd>{contact.email || '—'}</dd>
-                <dt>Ask Type</dt><dd>{contact.ask_type || '—'}</dd>
-                <dt>Status</dt><dd><StatusBadge status={contact.status} /></dd>
-                <dt>Last Contacted</dt><dd>{contact.last_contacted_date ? new Date(contact.last_contacted_date).toLocaleDateString() : '—'}</dd>
-                <dt>Gmail Thread</dt><dd className="thread-id-cell">{contact.gmail_thread_id || '—'}</dd>
-                <dt>Notes</dt><dd className="notes">{contact.notes || '—'}</dd>
-              </dl>
-              <div className="form-actions">
-                <button className="btn btn-ghost" onClick={() => setEditing(true)}>Edit</button>
-                <button className="btn btn-primary" onClick={() => setShowSend(true)} disabled={!contact.email}>
-                  Send Email
-                </button>
-              </div>
-            </div>
-          )
-        )}
-
-        {tab === 'history' && (
-          <div>
-            {logs.length === 0 && <p className="empty">No emails sent yet.</p>}
-            {logs.map(log => (
-              <div key={log.id} className="log-entry">
-                <div className="log-header">
-                  <strong>{log.subject}</strong>
-                  <span className="muted">{new Date(log.sent_at).toLocaleString()}</span>
-                </div>
-                <pre className="email-body">{log.body}</pre>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {tab === 'reply' && (
-          <div>
-            {!contact.gmail_thread_id ? (
-              <p className="empty">No Gmail thread linked. Send an email first, or paste a thread link in the Details tab.</p>
-            ) : (
-              <>
-                {threadLoading && <p className="muted" style={{ marginBottom: 16 }}>Loading thread...</p>}
-                {threadError && (
-                  <p className="error-msg" style={{ marginBottom: 16 }}>
-                    {threadError?.response?.data?.detail ?? 'Could not load thread'}
-                  </p>
-                )}
-                {thread && (
-                  <div className="thread-messages">
-                    {thread.messages.map(msg => (
-                      <div key={msg.id} className="thread-message">
-                        <div className="thread-message-header">
-                          <span className="thread-sender">{msg.sender}</span>
-                          <span className="muted thread-date">{msg.date}</span>
-                        </div>
-                        {msg.subject && <div className="thread-subject">{msg.subject}</div>}
-                        <p className="thread-snippet">{msg.snippet}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="reply-compose">
-                  <textarea
-                    className="form-input"
-                    rows={5}
-                    placeholder="Write your reply..."
-                    value={replyBody}
-                    onChange={e => setReplyBody(e.target.value)}
-                  />
-                  {reply.isError && (
-                    <p className="error-msg" style={{ marginTop: 8 }}>{reply.error?.response?.data?.detail ?? 'Reply failed'}</p>
-                  )}
-                  {reply.isSuccess && <p className="success-msg" style={{ marginTop: 8 }}>Reply sent!</p>}
-                  <div className="form-actions">
-                    <button
-                      className="btn btn-primary"
-                      disabled={!replyBody.trim() || reply.isPending}
-                      onClick={() => reply.mutate()}
-                    >
-                      {reply.isPending ? 'Sending...' : 'Send Reply'}
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </Modal>
-
-      {showSend && <SendEmailModal contact={contact} onClose={() => setShowSend(false)} />}
-    </>
+    <Modal title={org.name} onClose={onClose} wide>
+      <div className="tabs">
+        <button className={`tab ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>Overview</button>
+        <button className={`tab ${tab === 'people' ? 'active' : ''}`} onClick={() => setTab('people')}>
+          People {org.people.length > 0 && <span className="tab-count">{org.people.length}</span>}
+        </button>
+        <button className={`tab ${tab === 'conversation' ? 'active' : ''}`} onClick={() => setTab('conversation')}>
+          Conversation {org.threads.length > 0 && <span className="tab-count">{org.threads.length}</span>}
+        </button>
+      </div>
+      {tab === 'overview' && <OverviewTab org={org} categoryId={categoryId} />}
+      {tab === 'people' && <PeopleTab org={org} categoryId={categoryId} />}
+      {tab === 'conversation' && <ConversationTab org={org} categoryId={categoryId} project={project} />}
+    </Modal>
   )
 }
 
@@ -282,11 +547,11 @@ function GmailImportModal({ projectId, category, onClose }) {
   const [searchError, setSearchError] = useState('')
   const [searching, setSearching] = useState(false)
   const [selected, setSelected] = useState(null)
-  const [importForm, setImportForm] = useState({ company_name: '', contact_name: '', email: '' })
+  const [importForm, setImportForm] = useState({ org_name: '', contact_name: '', email: '' })
 
   const importThread = useMutation({
     mutationFn: () => postGmailImport(projectId, category.id, { thread_id: selected.thread_id, ...importForm }),
-    onSuccess: () => { qc.invalidateQueries(['contacts', category.id]); onClose() },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['orgs', category.id] }); onClose() },
   })
 
   const handleSearch = async () => {
@@ -305,7 +570,7 @@ function GmailImportModal({ projectId, category, onClose }) {
 
   if (selected) {
     return (
-      <Modal title="Import as Contact" onClose={() => setSelected(null)}>
+      <Modal title="Import as Organization" onClose={() => setSelected(null)}>
         <div className="gmail-thread-item" style={{ cursor: 'default', marginBottom: 16 }}>
           <div className="gmail-thread-subject">{selected.subject}</div>
           <div className="gmail-thread-meta">
@@ -315,19 +580,19 @@ function GmailImportModal({ projectId, category, onClose }) {
           {selected.snippet && <p className="gmail-thread-snippet">{selected.snippet}</p>}
         </div>
         <form onSubmit={e => { e.preventDefault(); importThread.mutate() }} className="form">
-          <label className="form-label">Company Name *
-            <input className="form-input" value={importForm.company_name} onChange={e => setImportForm(f => ({ ...f, company_name: e.target.value }))} required />
+          <label className="form-label">Organization Name *
+            <input className="form-input" value={importForm.org_name} onChange={e => setImportForm(f => ({ ...f, org_name: e.target.value }))} required />
           </label>
           <label className="form-label">Contact Name
             <input className="form-input" value={importForm.contact_name} onChange={e => setImportForm(f => ({ ...f, contact_name: e.target.value }))} />
           </label>
-          <label className="form-label">Email
+          <label className="form-label">Contact Email
             <input className="form-input" type="email" value={importForm.email} onChange={e => setImportForm(f => ({ ...f, email: e.target.value }))} />
           </label>
           {importThread.isError && <p className="error-msg">{importThread.error?.response?.data?.detail ?? 'Import failed'}</p>}
           <div className="form-actions">
             <button type="button" className="btn btn-ghost" onClick={() => setSelected(null)}>Back</button>
-            <button type="submit" className="btn btn-primary" disabled={importThread.isPending}>Import Contact</button>
+            <button type="submit" className="btn btn-primary" disabled={importThread.isPending}>Import</button>
           </div>
         </form>
       </Modal>
@@ -354,7 +619,6 @@ function GmailImportModal({ projectId, category, onClose }) {
         </div>
         {searchError && <p className="error-msg">{searchError}</p>}
       </div>
-
       {threads !== null && (
         <div style={{ marginTop: 16 }}>
           {threads.length === 0 ? (
@@ -364,7 +628,7 @@ function GmailImportModal({ projectId, category, onClose }) {
               {threads.map(t => (
                 <button key={t.thread_id} className="gmail-thread-item" onClick={() => {
                   setSelected(t)
-                  setImportForm({ company_name: '', contact_name: t.from_name || '', email: t.from_email || '' })
+                  setImportForm({ org_name: '', contact_name: t.from_name || '', email: t.from_email || '' })
                 }}>
                   <div className="gmail-thread-subject">{t.subject}</div>
                   <div className="gmail-thread-meta">
@@ -384,48 +648,48 @@ function GmailImportModal({ projectId, category, onClose }) {
 
 // ── Category Section ──────────────────────────────────────────────────────────
 
-function CategorySection({ category, projectId }) {
+function CategorySection({ category, projectId, project }) {
   const qc = useQueryClient()
-  const [showAddContact, setShowAddContact] = useState(false)
+  const [showAddOrg, setShowAddOrg] = useState(false)
   const [showGmailImport, setShowGmailImport] = useState(false)
-  const [selectedContact, setSelectedContact] = useState(null)
-  const [contactForm, setContactForm] = useState(emptyContactForm)
+  const [selectedOrgId, setSelectedOrgId] = useState(null)
+  const [orgForm, setOrgForm] = useState({ name: '', website: '', ask_type: '', contact_name: '', contact_email: '' })
 
-  const { data: contacts = [] } = useQuery({
-    queryKey: ['contacts', category.id],
-    queryFn: () => getContacts(category.id),
+  const { data: orgs = [] } = useQuery({
+    queryKey: ['orgs', category.id],
+    queryFn: () => getOrgs(category.id),
   })
 
-  const addContact = useMutation({
-    mutationFn: (data) => createContact(category.id, data),
+  const addOrg = useMutation({
+    mutationFn: (data) => createOrg(category.id, data),
     onSuccess: () => {
-      qc.invalidateQueries(['contacts', category.id])
-      setShowAddContact(false)
-      setContactForm(emptyContactForm)
+      qc.invalidateQueries({ queryKey: ['orgs', category.id] })
+      setShowAddOrg(false)
+      setOrgForm({ name: '', website: '', ask_type: '', contact_name: '', contact_email: '' })
     },
   })
 
-  const patchContact = useMutation({
-    mutationFn: ({ id, data }) => updateContact(category.id, id, data),
-    onSuccess: () => qc.invalidateQueries(['contacts', category.id]),
+  const patchOrg = useMutation({
+    mutationFn: ({ id, data }) => updateOrg(category.id, id, data),
+    onMutate: async ({ id, data }) => {
+      await qc.cancelQueries({ queryKey: ['orgs', category.id] })
+      const prev = qc.getQueryData(['orgs', category.id])
+      qc.setQueryData(['orgs', category.id], orgs => orgs?.map(o => o.id === id ? { ...o, ...data } : o))
+      return { prev }
+    },
+    onError: (_, __, ctx) => qc.setQueryData(['orgs', category.id], ctx.prev),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['orgs', category.id] }),
   })
 
-  const removeContact = useMutation({
-    mutationFn: (id) => deleteContact(category.id, id),
-    onSuccess: () => qc.invalidateQueries(['contacts', category.id]),
+  const removeOrg = useMutation({
+    mutationFn: (id) => deleteOrg(category.id, id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['orgs', category.id] }),
   })
 
   const removeCategory = useMutation({
     mutationFn: () => deleteCategory(projectId, category.id),
-    onSuccess: () => qc.invalidateQueries(['categories', projectId]),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['categories', projectId] }),
   })
-
-  const handleAddContact = (e) => {
-    e.preventDefault()
-    const { gmail_thread_link, ...rest } = contactForm
-    const threadId = parseThreadId(gmail_thread_link)
-    addContact.mutate({ ...rest, gmail_thread_id: threadId || null })
-  }
 
   return (
     <div className="category-section">
@@ -433,20 +697,19 @@ function CategorySection({ category, projectId }) {
         <h3>{category.name}</h3>
         <div className="category-actions">
           <button className="btn btn-sm btn-ghost" onClick={() => setShowGmailImport(true)}>↓ Import from Gmail</button>
-          <button className="btn btn-sm btn-ghost" onClick={() => setShowAddContact(true)}>+ Add Contact</button>
+          <button className="btn btn-sm btn-ghost" onClick={() => setShowAddOrg(true)}>+ Add Org</button>
           <button className="btn btn-sm btn-danger" onClick={() => { if (confirm(`Delete category "${category.name}"?`)) removeCategory.mutate() }}>Delete</button>
         </div>
       </div>
 
-      {contacts.length === 0 ? (
-        <p className="empty small">No contacts yet.</p>
+      {orgs.length === 0 ? (
+        <p className="empty small">No organizations yet.</p>
       ) : (
         <table className="table">
           <thead>
             <tr>
-              <th>Company</th>
+              <th>Organization</th>
               <th>Contact</th>
-              <th>Email</th>
               <th>Ask Type</th>
               <th>Status</th>
               <th>Last Contacted</th>
@@ -454,58 +717,75 @@ function CategorySection({ category, projectId }) {
             </tr>
           </thead>
           <tbody>
-            {contacts.map(c => (
-              <tr key={c.id} className="table-row" onClick={() => setSelectedContact(c)}>
-                <td>{c.company_name}</td>
-                <td>{c.contact_name || '—'}</td>
-                <td>{c.email || '—'}</td>
-                <td>{c.ask_type || '—'}</td>
-                <td>
-                  <StatusSelect
-                    value={c.status}
-                    onClick={e => e.stopPropagation()}
-                    onChange={e => patchContact.mutate({ id: c.id, data: { status: e.target.value } })}
-                  />
-                </td>
-                <td>{c.last_contacted_date ? new Date(c.last_contacted_date).toLocaleDateString() : '—'}</td>
-                <td>
-                  <button
-                    className="btn btn-sm btn-danger"
-                    onClick={e => { e.stopPropagation(); if (confirm(`Delete ${c.company_name}?`)) removeContact.mutate(c.id) }}
-                  >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {orgs.map(org => {
+              const primary = org.people[0]
+              return (
+                <tr key={org.id} className="table-row" onClick={() => setSelectedOrgId(org.id)}>
+                  <td><strong>{org.name}</strong></td>
+                  <td>
+                    {primary
+                      ? <>{primary.name || primary.email}{org.people.length > 1 && <span className="muted"> +{org.people.length - 1}</span>}</>
+                      : <span className="muted">—</span>
+                    }
+                  </td>
+                  <td>{org.ask_type || '—'}</td>
+                  <td>
+                    <StatusSelect
+                      value={org.status}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => patchOrg.mutate({ id: org.id, data: { status: e.target.value } })}
+                    />
+                  </td>
+                  <td>{org.last_contacted_date ? new Date(org.last_contacted_date).toLocaleDateString() : '—'}</td>
+                  <td>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      onClick={e => { e.stopPropagation(); if (confirm(`Delete ${org.name}?`)) removeOrg.mutate(org.id) }}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       )}
 
-      {showAddContact && (
-        <Modal title={`Add Contact to ${category.name}`} onClose={() => setShowAddContact(false)}>
-          <form onSubmit={handleAddContact} className="form">
-            <label className="form-label">Company Name *
-              <input className="form-input" value={contactForm.company_name} onChange={e => setContactForm(f => ({ ...f, company_name: e.target.value }))} required />
+      {showAddOrg && (
+        <Modal title={`Add Organization to ${category.name}`} onClose={() => setShowAddOrg(false)}>
+          <form
+            onSubmit={e => {
+              e.preventDefault()
+              addOrg.mutate({
+                name: orgForm.name,
+                website: orgForm.website || null,
+                ask_type: orgForm.ask_type || null,
+                contact_name: orgForm.contact_name || null,
+                contact_email: orgForm.contact_email || null,
+              })
+            }}
+            className="form"
+          >
+            <label className="form-label">Organization Name *
+              <input className="form-input" value={orgForm.name} onChange={e => setOrgForm(f => ({ ...f, name: e.target.value }))} required />
             </label>
-            <label className="form-label">Contact Name
-              <input className="form-input" value={contactForm.contact_name} onChange={e => setContactForm(f => ({ ...f, contact_name: e.target.value }))} />
-            </label>
-            <label className="form-label">Email
-              <input className="form-input" type="email" value={contactForm.email} onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))} />
+            <label className="form-label">Website
+              <input className="form-input" value={orgForm.website} onChange={e => setOrgForm(f => ({ ...f, website: e.target.value }))} placeholder="https://..." />
             </label>
             <label className="form-label">Ask Type
-              <input className="form-input" value={contactForm.ask_type} onChange={e => setContactForm(f => ({ ...f, ask_type: e.target.value }))} placeholder="e.g. money, product, paid performance" />
+              <input className="form-input" value={orgForm.ask_type} onChange={e => setOrgForm(f => ({ ...f, ask_type: e.target.value }))} placeholder="e.g. money, product, paid performance" />
             </label>
-            <label className="form-label">Gmail Thread Link
-              <input className="form-input" value={contactForm.gmail_thread_link} onChange={e => setContactForm(f => ({ ...f, gmail_thread_link: e.target.value }))} placeholder="Paste Gmail URL or thread ID (optional)" />
+            <label className="form-label">Contact Name
+              <input className="form-input" value={orgForm.contact_name} onChange={e => setOrgForm(f => ({ ...f, contact_name: e.target.value }))} />
             </label>
-            <label className="form-label">Notes
-              <textarea className="form-input" rows={3} value={contactForm.notes} onChange={e => setContactForm(f => ({ ...f, notes: e.target.value }))} />
+            <label className="form-label">Contact Email
+              <input className="form-input" type="email" value={orgForm.contact_email} onChange={e => setOrgForm(f => ({ ...f, contact_email: e.target.value }))} />
             </label>
+            {addOrg.isError && <p className="error-msg">{addOrg.error?.response?.data?.detail ?? 'Failed to add organization'}</p>}
             <div className="form-actions">
-              <button type="button" className="btn btn-ghost" onClick={() => setShowAddContact(false)}>Cancel</button>
-              <button type="submit" className="btn btn-primary" disabled={addContact.isPending}>Add</button>
+              <button type="button" className="btn btn-ghost" onClick={() => setShowAddOrg(false)}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={addOrg.isPending}>Add</button>
             </div>
           </form>
         </Modal>
@@ -515,8 +795,8 @@ function CategorySection({ category, projectId }) {
         <GmailImportModal projectId={projectId} category={category} onClose={() => setShowGmailImport(false)} />
       )}
 
-      {selectedContact && (
-        <ContactModal contact={selectedContact} categoryId={category.id} onClose={() => setSelectedContact(null)} />
+      {selectedOrgId && (
+        <OrgModal orgId={selectedOrgId} categoryId={category.id} project={project} onClose={() => setSelectedOrgId(null)} />
       )}
     </div>
   )
@@ -536,7 +816,7 @@ export default function ProjectDetailPage() {
 
   const addCategory = useMutation({
     mutationFn: () => createCategory(id, { name: categoryName }),
-    onSuccess: () => { qc.invalidateQueries(['categories', id]); setShowAddCategory(false); setCategoryName('') },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['categories', id] }); setShowAddCategory(false); setCategoryName('') },
   })
 
   return (
@@ -552,11 +832,11 @@ export default function ProjectDetailPage() {
       </div>
 
       {categories.length === 0 && (
-        <p className="empty">No categories yet. Add one to start tracking contacts.</p>
+        <p className="empty">No categories yet. Add one to start tracking organizations.</p>
       )}
 
       {categories.map(cat => (
-        <CategorySection key={cat.id} category={cat} projectId={id} />
+        <CategorySection key={cat.id} category={cat} projectId={id} project={project} />
       ))}
 
       {showAddCategory && (

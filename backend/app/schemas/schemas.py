@@ -1,5 +1,5 @@
 from datetime import date as Date, datetime
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 from app.models.models import ContactStatus
 
@@ -62,38 +62,129 @@ class CategoryOut(CategoryBase):
     model_config = {"from_attributes": True}
 
 
-# ── Contact ───────────────────────────────────────────────────────────────────
+# ── Person ────────────────────────────────────────────────────────────────────
 
-class ContactBase(BaseModel):
-    company_name: str
-    contact_name: Optional[str] = None
+class PersonCreate(BaseModel):
+    name: Optional[str] = None
     email: Optional[str] = None
-    ask_type: Optional[str] = None
-    status: ContactStatus = ContactStatus.not_contacted
+    title: Optional[str] = None
     notes: Optional[str] = None
 
 
-class ContactCreate(ContactBase):
-    pass
-
-
-class ContactUpdate(BaseModel):
-    company_name: Optional[str] = None
-    contact_name: Optional[str] = None
+class PersonUpdate(BaseModel):
+    name: Optional[str] = None
     email: Optional[str] = None
+    title: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class PersonOut(BaseModel):
+    id: int
+    organization_id: int
+    name: Optional[str] = None
+    email: Optional[str] = None
+    title: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Thread ────────────────────────────────────────────────────────────────────
+
+class ThreadSummaryOut(BaseModel):
+    id: int
+    gmail_thread_id: str
+    subject: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ThreadMessage(BaseModel):
+    id: str
+    sender: str
+    subject: str
+    date: str
+    snippet: str
+
+
+class ThreadMessagesOut(BaseModel):
+    thread_id: str
+    messages: List[ThreadMessage]
+
+
+class LinkThreadRequest(BaseModel):
+    gmail_thread_id: str
+    subject: Optional[str] = None
+
+
+# ── Organization ──────────────────────────────────────────────────────────────
+
+class OrgCreate(BaseModel):
+    name: str
+    website: Optional[str] = None
+    ask_type: Optional[str] = None
+    notes: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_email: Optional[str] = None
+
+
+class OrgUpdate(BaseModel):
+    name: Optional[str] = None
+    website: Optional[str] = None
     ask_type: Optional[str] = None
     status: Optional[ContactStatus] = None
     notes: Optional[str] = None
-    gmail_thread_id: Optional[str] = None
 
 
-class ContactOut(ContactBase):
+class OrgOut(BaseModel):
     id: int
     category_id: int
+    name: str
+    website: Optional[str] = None
+    ask_type: Optional[str] = None
+    status: ContactStatus
     last_contacted_date: Optional[datetime] = None
-    gmail_thread_id: Optional[str] = None
+    notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    people: List[PersonOut] = []
+    threads: List[ThreadSummaryOut] = []
+
+    model_config = {"from_attributes": True}
+
+
+# ── Email send / reply ────────────────────────────────────────────────────────
+
+class StartEmailRequest(BaseModel):
+    to_person_id: int
+    cc_person_ids: List[int] = []
+    subject: str
+    body: str
+
+
+class ReplyRequest(BaseModel):
+    body: str
+    cc_person_ids: List[int] = []
+
+
+class SendEmailResponse(BaseModel):
+    thread_id: int
+    gmail_thread_id: str
+    subject: str
+
+
+# ── EmailLog ──────────────────────────────────────────────────────────────────
+
+class EmailLogOut(BaseModel):
+    id: int
+    thread_id: int
+    subject: str
+    body: str
+    to_email: Optional[str] = None
+    cc_emails: Optional[str] = None
+    sent_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -124,51 +215,6 @@ class EmailTemplateOut(EmailTemplateBase):
     model_config = {"from_attributes": True}
 
 
-# ── EmailLog ──────────────────────────────────────────────────────────────────
-
-class EmailLogOut(BaseModel):
-    id: int
-    contact_id: int
-    subject: str
-    body: str
-    sent_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-# ── Email send / reply ────────────────────────────────────────────────────────
-
-class SendEmailRequest(BaseModel):
-    template_id: int
-
-
-class SendEmailResponse(BaseModel):
-    gmail_message_id: str
-    gmail_thread_id: str
-    subject: str
-    body: str
-
-
-class ReplyEmailRequest(BaseModel):
-    body: str
-    subject: Optional[str] = None
-
-
-# ── Thread ────────────────────────────────────────────────────────────────────
-
-class ThreadMessage(BaseModel):
-    id: str
-    sender: str
-    subject: str
-    date: str
-    snippet: str
-
-
-class ThreadOut(BaseModel):
-    thread_id: str
-    messages: list[ThreadMessage]
-
-
 # ── Gmail import ──────────────────────────────────────────────────────────────
 
 class GmailImportThread(BaseModel):
@@ -182,6 +228,6 @@ class GmailImportThread(BaseModel):
 
 class GmailImportCreate(BaseModel):
     thread_id: str
-    company_name: str
+    org_name: str
     contact_name: Optional[str] = None
     email: Optional[str] = None

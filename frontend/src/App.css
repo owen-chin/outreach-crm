@@ -391,3 +391,96 @@ textarea.form-input { resize: vertical; }
 .empty.small { padding: 16px 20px; text-align: left; font-size: 13px; }
 .success-msg { color: #065f46; font-weight: 500; margin-bottom: 12px; }
 .error-msg { color: var(--danger); font-size: 13px; }
+
+/* ── Tab count pill ── */
+.tab-count {
+  display: inline-block;
+  background: #e5e7eb;
+  color: #374151;
+  border-radius: 9999px;
+  font-size: 11px;
+  padding: 0 5px;
+  margin-left: 4px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+.tab.active .tab-count { background: #ddd6fe; color: var(--primary); }
+
+/* ── People tab ── */
+.people-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.person-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+.person-card-content { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.person-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.person-name { font-size: 14px; font-weight: 500; }
+.person-title { font-size: 12px; color: var(--text-muted); }
+.person-email { font-size: 12px; color: var(--primary); text-decoration: none; }
+.person-email:hover { text-decoration: underline; }
+.person-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.add-person-form {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg);
+}
+
+/* ── Conversation / thread list ── */
+.thread-card-list { display: flex; flex-direction: column; gap: 8px; }
+.thread-card {
+  width: 100%;
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+  font-family: inherit;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.thread-card:hover { background: #ede9fe; border-color: var(--primary); }
+.thread-card-subject { font-size: 13px; font-weight: 500; }
+.thread-card-date { font-size: 12px; flex-shrink: 0; }
+.empty-conversation { text-align: center; padding: 32px 0; }
+
+/* ── Thread view header ── */
+.thread-view-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.thread-view-subject { font-size: 14px; font-weight: 600; }
+
+/* ── Link thread inline form ── */
+.link-thread-form {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg);
+}
+
+/* ── CC checkboxes ── */
+.cc-checkboxes { display: flex; flex-direction: column; gap: 4px; padding: 2px 0; }
+.cc-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: normal;
+  cursor: pointer;
+  color: var(--text);
+}
+.cc-checkbox-label input[type="checkbox"] { width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; }

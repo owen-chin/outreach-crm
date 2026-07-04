@@ -21,11 +21,22 @@ export const createCategory = (projectId, data) => api.post(`/api/projects/${pro
 export const updateCategory = (projectId, id, data) => api.patch(`/api/projects/${projectId}/categories/${id}`, data).then(r => r.data)
 export const deleteCategory = (projectId, id) => api.delete(`/api/projects/${projectId}/categories/${id}`)
 
-// Contacts
-export const getContacts = (categoryId) => api.get(`/api/categories/${categoryId}/contacts`).then(r => r.data)
-export const createContact = (categoryId, data) => api.post(`/api/categories/${categoryId}/contacts`, data).then(r => r.data)
-export const updateContact = (categoryId, id, data) => api.patch(`/api/categories/${categoryId}/contacts/${id}`, data).then(r => r.data)
-export const deleteContact = (categoryId, id) => api.delete(`/api/categories/${categoryId}/contacts/${id}`)
+// Organizations
+export const getOrgs = (categoryId) => api.get(`/api/categories/${categoryId}/organizations`).then(r => r.data)
+export const createOrg = (categoryId, data) => api.post(`/api/categories/${categoryId}/organizations`, data).then(r => r.data)
+export const updateOrg = (categoryId, orgId, data) => api.patch(`/api/categories/${categoryId}/organizations/${orgId}`, data).then(r => r.data)
+export const deleteOrg = (categoryId, orgId) => api.delete(`/api/categories/${categoryId}/organizations/${orgId}`)
+
+// People
+export const addPerson = (orgId, data) => api.post(`/api/organizations/${orgId}/people`, data).then(r => r.data)
+export const updatePerson = (orgId, personId, data) => api.patch(`/api/organizations/${orgId}/people/${personId}`, data).then(r => r.data)
+export const deletePerson = (orgId, personId) => api.delete(`/api/organizations/${orgId}/people/${personId}`)
+
+// Threads
+export const startEmail = (orgId, data) => api.post(`/api/organizations/${orgId}/threads/start-email`, data).then(r => r.data)
+export const linkThread = (orgId, data) => api.post(`/api/organizations/${orgId}/threads/link`, data).then(r => r.data)
+export const getThreadMessages = (orgId, threadId) => api.get(`/api/organizations/${orgId}/threads/${threadId}/messages`).then(r => r.data)
+export const replyToThread = (orgId, threadId, data) => api.post(`/api/organizations/${orgId}/threads/${threadId}/reply`, data).then(r => r.data)
 
 // Email Templates
 export const getTemplates = () => api.get('/api/email-templates').then(r => r.data)
@@ -33,13 +44,7 @@ export const createTemplate = (data) => api.post('/api/email-templates', data).t
 export const updateTemplate = (id, data) => api.patch(`/api/email-templates/${id}`, data).then(r => r.data)
 export const deleteTemplate = (id) => api.delete(`/api/email-templates/${id}`)
 
-// Email
-export const sendEmail = (contactId, data) => api.post(`/api/contacts/${contactId}/send-email`, data).then(r => r.data)
-export const replyEmail = (contactId, data) => api.post(`/api/contacts/${contactId}/reply-email`, data).then(r => r.data)
-export const getEmailLogs = (contactId) => api.get(`/api/contacts/${contactId}/email-logs`).then(r => r.data)
-export const getThread = (contactId) => api.get(`/api/contacts/${contactId}/thread`).then(r => r.data)
-
-// Gmail Import
+// Gmail
 export const searchThreads = (email) => api.get('/api/gmail/search-threads', { params: { email } }).then(r => r.data)
 export const postGmailImport = (projectId, categoryId, data) => api.post(`/api/projects/${projectId}/categories/${categoryId}/gmail-import`, data).then(r => r.data)
 

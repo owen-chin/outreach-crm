@@ -3,9 +3,9 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.db.database import get_db
-from app.models.models import Category, Project, Contact, ContactStatus
-from app.schemas.schemas import CategoryCreate, CategoryUpdate, CategoryOut, GmailImportThread, GmailImportCreate, ContactOut
-from app.services.gmail import get_credentials, get_or_create_label, list_threads_for_label
+from app.models.models import Category, Project, Organization, Person, Thread, ContactStatus
+from app.schemas.schemas import CategoryCreate, CategoryUpdate, CategoryOut, GmailImportThread, GmailImportCreate, OrgOut
+from app.services.gmail import get_credentials, list_threads_for_query
 
 router = APIRouter(prefix="/api/projects/{project_id}/categories", tags=["categories"])
 
@@ -71,37 +71,8 @@ def delete_category(project_id: int, category_id: int, db: Session = Depends(get
     db.commit()
 
 
-@router.get("/{category_id}/gmail-import", response_model=List[GmailImportThread])
-def list_gmail_import(project_id: int, category_id: int, db: Session = Depends(get_db)):
-    project = _get_project_or_404(project_id, db)
-    category = db.query(Category).filter(
-        Category.id == category_id, Category.project_id == project_id
-    ).first()
-    if not category:
-        raise HTTPException(status_code=404, detail="Category not found")
-
-    creds = get_credentials(db)
-    if not creds or not creds.valid:
-        raise HTTPException(status_code=403, detail="Gmail not connected")
-
-    label_name = f"{project.name}/{category.name}"
-    try:
-        label_id = get_or_create_label(creds, label_name)
-        threads = list_threads_for_label(creds, label_id)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gmail error: {e}")
-
-    existing_thread_ids = {
-        c.gmail_thread_id
-        for c in db.query(Contact).filter(Contact.category_id == category_id).all()
-        if c.gmail_thread_id
-    }
-
-    return [GmailImportThread(**t) for t in threads if t["thread_id"] not in existing_thread_ids]
-
-
-@router.post("/{category_id}/gmail-import", response_model=ContactOut, status_code=201)
-def create_contact_from_gmail(
+@router.post("/{category_id}/gmail-import", response_model=OrgOut, status_code=201)
+def create_org_from_gmail(
     project_id: int, category_id: int, payload: GmailImportCreate, db: Session = Depends(get_db)
 ):
     _get_project_or_404(project_id, db)
@@ -111,15 +82,28 @@ def create_contact_from_gmail(
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
-    contact = Contact(
+    org = Organization(
         category_id=category_id,
-        company_name=payload.company_name,
-        contact_name=payload.contact_name,
-        email=payload.email,
-        gmail_thread_id=payload.thread_id,
+        name=payload.org_name,
         status=ContactStatus.responded,
     )
-    db.add(contact)
+    db.add(org)
+    db.flush()
+
+    if payload.contact_name or payload.email:
+        person = Person(
+            organization_id=org.id,
+            name=payload.contact_name,
+            email=payload.email,
+        )
+        db.add(person)
+
+    thread = Thread(
+        organization_id=org.id,
+        gmail_thread_id=payload.thread_id,
+    )
+    db.add(thread)
+
     db.commit()
-    db.refresh(contact)
-    return contact
+    db.refresh(org)
+    return org
