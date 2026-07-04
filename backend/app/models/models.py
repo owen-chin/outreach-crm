@@ -16,15 +16,30 @@ class ContactStatus(str, enum.Enum):
     declined = "declined"
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    google_id = Column(String, unique=True, nullable=False, index=True)
+    email = Column(String, nullable=False)
+    name = Column(String)
+    picture = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    projects = relationship("Project", back_populates="owner")
+
+
 class Project(Base):
     __tablename__ = "projects"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     name = Column(String, nullable=False)
     date = Column(Date)
     description = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    owner = relationship("User", back_populates="projects")
     categories = relationship("Category", back_populates="project", cascade="all, delete-orphan")
 
 
@@ -52,6 +67,7 @@ class Contact(Base):
     status = Column(Enum(ContactStatus), default=ContactStatus.not_contacted, nullable=False)
     last_contacted_date = Column(DateTime(timezone=True))
     notes = Column(Text)
+    gmail_thread_id = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

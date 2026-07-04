@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routers import projects, categories, contacts, email_templates, auth, email
+from app.routers import projects, categories, contacts, email_templates, auth, email, gmail
 
 app = FastAPI(title="Sponsor CRM")
 
@@ -19,6 +19,7 @@ app.include_router(contacts.router)
 app.include_router(email_templates.router)
 app.include_router(auth.router)
 app.include_router(email.router)
+app.include_router(gmail.router)
 
 
 @app.get("/health")

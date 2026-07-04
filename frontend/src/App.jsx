@@ -1,7 +1,9 @@
-import { useEffect } from 'react'
-import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import './App.css'
+import { AuthProvider, useAuth } from './context/AuthContext'
 import Layout from './components/Layout'
+import LoginPage from './pages/LoginPage'
 import ProjectsPage from './pages/ProjectsPage'
 import ProjectDetailPage from './pages/ProjectDetailPage'
 import TemplatesPage from './pages/TemplatesPage'
@@ -9,33 +11,32 @@ import SettingsPage from './pages/SettingsPage'
 
 const queryClient = new QueryClient()
 
-function GmailCallbackHandler() {
-  const navigate = useNavigate()
-  const location = useLocation()
+function ProtectedRoute({ children }) {
+  const { user, loading } = useAuth()
+  if (loading) return <div className="loading-screen">Loading...</div>
+  if (!user) return <Navigate to="/login" replace />
+  return children
+}
 
-  useEffect(() => {
-    const params = new URLSearchParams(location.search)
-    if (params.get('gmail') === 'connected') {
-      navigate('/settings', { replace: true })
-    }
-  }, [location, navigate])
-
-  return null
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/" element={<ProtectedRoute><Layout><ProjectsPage /></Layout></ProtectedRoute>} />
+      <Route path="/projects/:id" element={<ProtectedRoute><Layout><ProjectDetailPage /></Layout></ProtectedRoute>} />
+      <Route path="/templates" element={<ProtectedRoute><Layout><TemplatesPage /></Layout></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><Layout><SettingsPage /></Layout></ProtectedRoute>} />
+    </Routes>
+  )
 }
 
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <GmailCallbackHandler />
-        <Layout>
-          <Routes>
-            <Route path="/" element={<ProjectsPage />} />
-            <Route path="/projects/:id" element={<ProjectDetailPage />} />
-            <Route path="/templates" element={<TemplatesPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-          </Routes>
-        </Layout>
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>
   )

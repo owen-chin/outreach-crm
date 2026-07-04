@@ -2,6 +2,12 @@ import axios from 'axios'
 
 const api = axios.create({ baseURL: 'http://localhost:8000' })
 
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('crm_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
 // Projects
 export const getProjects = () => api.get('/api/projects').then(r => r.data)
 export const getProject = (id) => api.get(`/api/projects/${id}`).then(r => r.data)
@@ -29,7 +35,13 @@ export const deleteTemplate = (id) => api.delete(`/api/email-templates/${id}`)
 
 // Email
 export const sendEmail = (contactId, data) => api.post(`/api/contacts/${contactId}/send-email`, data).then(r => r.data)
+export const replyEmail = (contactId, data) => api.post(`/api/contacts/${contactId}/reply-email`, data).then(r => r.data)
 export const getEmailLogs = (contactId) => api.get(`/api/contacts/${contactId}/email-logs`).then(r => r.data)
+export const getThread = (contactId) => api.get(`/api/contacts/${contactId}/thread`).then(r => r.data)
+
+// Gmail Import
+export const searchThreads = (email) => api.get('/api/gmail/search-threads', { params: { email } }).then(r => r.data)
+export const postGmailImport = (projectId, categoryId, data) => api.post(`/api/projects/${projectId}/categories/${categoryId}/gmail-import`, data).then(r => r.data)
 
 // Auth
 export const getAuthStatus = () => api.get('/api/auth/status').then(r => r.data)

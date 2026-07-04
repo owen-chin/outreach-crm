@@ -4,6 +4,17 @@ from pydantic import BaseModel
 from app.models.models import ContactStatus
 
 
+# ── User ──────────────────────────────────────────────────────────────────────
+
+class UserOut(BaseModel):
+    id: int
+    email: str
+    name: Optional[str] = None
+    picture: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
 # ── Project ──────────────────────────────────────────────────────────────────
 
 class ProjectBase(BaseModel):
@@ -73,12 +84,14 @@ class ContactUpdate(BaseModel):
     ask_type: Optional[str] = None
     status: Optional[ContactStatus] = None
     notes: Optional[str] = None
+    gmail_thread_id: Optional[str] = None
 
 
 class ContactOut(ContactBase):
     id: int
     category_id: int
     last_contacted_date: Optional[datetime] = None
+    gmail_thread_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -123,7 +136,7 @@ class EmailLogOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ── Email send ────────────────────────────────────────────────────────────────
+# ── Email send / reply ────────────────────────────────────────────────────────
 
 class SendEmailRequest(BaseModel):
     template_id: int
@@ -131,5 +144,44 @@ class SendEmailRequest(BaseModel):
 
 class SendEmailResponse(BaseModel):
     gmail_message_id: str
+    gmail_thread_id: str
     subject: str
     body: str
+
+
+class ReplyEmailRequest(BaseModel):
+    body: str
+    subject: Optional[str] = None
+
+
+# ── Thread ────────────────────────────────────────────────────────────────────
+
+class ThreadMessage(BaseModel):
+    id: str
+    sender: str
+    subject: str
+    date: str
+    snippet: str
+
+
+class ThreadOut(BaseModel):
+    thread_id: str
+    messages: list[ThreadMessage]
+
+
+# ── Gmail import ──────────────────────────────────────────────────────────────
+
+class GmailImportThread(BaseModel):
+    thread_id: str
+    subject: str
+    from_email: str
+    from_name: str
+    date: str
+    snippet: str
+
+
+class GmailImportCreate(BaseModel):
+    thread_id: str
+    company_name: str
+    contact_name: Optional[str] = None
+    email: Optional[str] = None
