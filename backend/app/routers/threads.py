@@ -9,7 +9,7 @@ from app.schemas.schemas import (
     ThreadSummaryOut, ThreadMessagesOut, LinkThreadRequest,
     StartEmailRequest, ReplyRequest, SendEmailResponse, EmailLogOut,
 )
-from app.services.gmail import get_credentials, send_email, reply_email, get_thread
+from app.services.gmail import get_credentials, send_email, reply_email, get_thread, get_or_create_label, apply_label_to_thread
 
 router = APIRouter(prefix="/api/organizations/{org_id}/threads", tags=["threads"])
 
@@ -47,6 +47,18 @@ def _resolve_people(person_ids: List[int], org_id: int, db: Session) -> List[Per
     return people
 
 
+def _apply_label(creds, org: Organization, gmail_thread_id: str) -> None:
+    """Applies {project}/{category} label to a Gmail thread. Silently ignores failures."""
+    try:
+        category = org.category
+        project = category.project
+        label_name = f"{project.name}/{category.name}"
+        label_id = get_or_create_label(creds, label_name)
+        apply_label_to_thread(creds, gmail_thread_id, label_id)
+    except Exception:
+        pass
+
+
 @router.get("", response_model=List[ThreadSummaryOut])
 def list_threads(org_id: int, db: Session = Depends(get_db)):
     _get_org_or_404(org_id, db)
@@ -75,6 +87,8 @@ def start_email(org_id: int, payload: StartEmailRequest, db: Session = Depends(g
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gmail error: {e}")
+
+    _apply_label(creds, org, gmail_thread_id)
 
     thread = Thread(
         organization_id=org_id,
@@ -108,7 +122,7 @@ def start_email(org_id: int, payload: StartEmailRequest, db: Session = Depends(g
 
 @router.post("/link", response_model=ThreadSummaryOut, status_code=201)
 def link_thread(org_id: int, payload: LinkThreadRequest, db: Session = Depends(get_db)):
-    _get_org_or_404(org_id, db)
+    org = _get_org_or_404(org_id, db)
     thread = Thread(
         organization_id=org_id,
         gmail_thread_id=payload.gmail_thread_id,
@@ -117,6 +131,9 @@ def link_thread(org_id: int, payload: LinkThreadRequest, db: Session = Depends(g
     db.add(thread)
     db.commit()
     db.refresh(thread)
+    creds = get_credentials(db)
+    if creds and creds.valid:
+        _apply_label(creds, org, payload.gmail_thread_id)
     return thread
 
 
@@ -167,6 +184,8 @@ def reply_to_thread(org_id: int, thread_id: int, payload: ReplyRequest, db: Sess
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gmail error: {e}")
+
+    _apply_label(creds, org, thread.gmail_thread_id)
 
     log = EmailLog(
         thread_id=thread.id,
