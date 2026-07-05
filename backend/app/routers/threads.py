@@ -1,7 +1,8 @@
+import json
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Form, UploadFile, File
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from app.db.database import get_db
 from app.models.models import Organization, Person, Thread, EmailLog, ContactStatus
@@ -66,46 +67,52 @@ def list_threads(org_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/start-email", response_model=SendEmailResponse, status_code=201)
-def start_email(org_id: int, payload: StartEmailRequest, db: Session = Depends(get_db)):
+async def start_email(
+    org_id: int,
+    to_person_id: int = Form(...),
+    cc_person_ids: str = Form("[]"),
+    subject: str = Form(...),
+    body: str = Form(...),
+    attachments: List[UploadFile] = File(default=[]),
+    db: Session = Depends(get_db),
+):
     org = _get_org_or_404(org_id, db)
     creds = _get_creds_or_403(db)
 
     to_person = db.query(Person).filter(
-        Person.id == payload.to_person_id, Person.organization_id == org_id
+        Person.id == to_person_id, Person.organization_id == org_id
     ).first()
     if not to_person:
         raise HTTPException(status_code=404, detail="To-person not found in this organization")
     if not to_person.email:
         raise HTTPException(status_code=400, detail="To-person has no email address")
 
-    cc_people = _resolve_people(payload.cc_person_ids, org_id, db)
+    cc_ids = json.loads(cc_person_ids)
+    cc_people = _resolve_people(cc_ids, org_id, db)
     cc_emails = [p.email for p in cc_people if p.email]
+
+    attachment_data = [(f.filename, await f.read(), f.content_type or "application/octet-stream") for f in attachments]
 
     try:
         _msg_id, gmail_thread_id = send_email(
-            creds, to_person.email, payload.subject, payload.body, cc=cc_emails
+            creds, to_person.email, subject, body, cc=cc_emails, attachments=attachment_data
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gmail error: {e}")
 
     _apply_label(creds, org, gmail_thread_id)
 
-    thread = Thread(
-        organization_id=org_id,
-        gmail_thread_id=gmail_thread_id,
-        subject=payload.subject,
-    )
+    thread = Thread(organization_id=org_id, gmail_thread_id=gmail_thread_id, subject=subject)
     db.add(thread)
     db.flush()
 
-    log = EmailLog(
+    db.add(EmailLog(
         thread_id=thread.id,
-        subject=payload.subject,
-        body=payload.body,
+        subject=subject,
+        body=body,
         to_email=to_person.email,
         cc_emails=",".join(cc_emails) if cc_emails else None,
-    )
-    db.add(log)
+    ))
 
     org.last_contacted_date = datetime.now(timezone.utc)
     if org.status == ContactStatus.not_contacted:
@@ -116,7 +123,7 @@ def start_email(org_id: int, payload: StartEmailRequest, db: Session = Depends(g
     return SendEmailResponse(
         thread_id=thread.id,
         gmail_thread_id=thread.gmail_thread_id,
-        subject=thread.subject or payload.subject,
+        subject=thread.subject or subject,
     )
 
 
@@ -155,19 +162,25 @@ def get_thread_logs(org_id: int, thread_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{thread_id}/reply", response_model=SendEmailResponse, status_code=201)
-def reply_to_thread(org_id: int, thread_id: int, payload: ReplyRequest, db: Session = Depends(get_db)):
+async def reply_to_thread(
+    org_id: int,
+    thread_id: int,
+    cc_person_ids: str = Form("[]"),
+    body: str = Form(...),
+    attachments: List[UploadFile] = File(default=[]),
+    db: Session = Depends(get_db),
+):
     org = _get_org_or_404(org_id, db)
     thread = _get_thread_or_404(org_id, thread_id, db)
     creds = _get_creds_or_403(db)
 
-    cc_people = _resolve_people(payload.cc_person_ids, org_id, db)
+    cc_ids = json.loads(cc_person_ids)
+    cc_people = _resolve_people(cc_ids, org_id, db)
     cc_emails = [p.email for p in cc_people if p.email]
 
-    # Find the primary recipient from the thread's first email log
     first_log = db.query(EmailLog).filter(EmailLog.thread_id == thread.id).order_by(EmailLog.sent_at).first()
     to_email = first_log.to_email if first_log else None
     if not to_email:
-        # Fall back to first person with email in org
         first_person = db.query(Person).filter(
             Person.organization_id == org_id, Person.email.isnot(None)
         ).first()
@@ -178,23 +191,24 @@ def reply_to_thread(org_id: int, thread_id: int, payload: ReplyRequest, db: Sess
     subject = thread.subject or "Re: (no subject)"
     reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
 
+    attachment_data = [(f.filename, await f.read(), f.content_type or "application/octet-stream") for f in attachments]
+
     try:
         _msg_id, _thread_id = reply_email(
-            creds, thread.gmail_thread_id, to_email, reply_subject, payload.body, cc=cc_emails
+            creds, thread.gmail_thread_id, to_email, reply_subject, body, cc=cc_emails, attachments=attachment_data
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gmail error: {e}")
 
     _apply_label(creds, org, thread.gmail_thread_id)
 
-    log = EmailLog(
+    db.add(EmailLog(
         thread_id=thread.id,
         subject=reply_subject,
-        body=payload.body,
+        body=body,
         to_email=to_email,
         cc_emails=",".join(cc_emails) if cc_emails else None,
-    )
-    db.add(log)
+    ))
 
     org.last_contacted_date = datetime.now(timezone.utc)
     db.commit()

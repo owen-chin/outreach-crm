@@ -501,3 +501,81 @@ textarea.form-input { resize: vertical; }
   color: var(--text);
 }
 .cc-checkbox-label input[type="checkbox"] { width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; }
+
+/* ── Tiptap rich text editor ── */
+.tiptap-wrapper {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+.tiptap-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.tiptap-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.1s, color 0.1s;
+}
+.tiptap-btn:hover { background: var(--border); color: var(--text); }
+.tiptap-btn.active { background: #ede9fe; color: var(--primary); }
+.tiptap-divider { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+.tiptap-content { padding: 12px 14px; }
+.tiptap-content .ProseMirror { outline: none; }
+.tiptap-content .ProseMirror p { margin: 0 0 0.75em; }
+.tiptap-content .ProseMirror p:last-child { margin-bottom: 0; }
+.tiptap-content .ProseMirror ul,
+.tiptap-content .ProseMirror ol { padding-left: 1.5em; margin: 0 0 0.75em; }
+.tiptap-content .ProseMirror li { margin-bottom: 0.25em; }
+.tiptap-content .ProseMirror a { color: var(--primary); text-decoration: underline; }
+.tiptap-content .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--text-muted);
+  pointer-events: none;
+  height: 0;
+}
+
+/* ── Attachment chips ── */
+.attachment-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ede9fe;
+  color: var(--primary);
+  border-radius: 100px;
+  padding: 3px 10px 3px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachment-chip button {
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.attachment-chip button:hover { opacity: 1; }

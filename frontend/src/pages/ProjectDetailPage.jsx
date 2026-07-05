@@ -10,6 +10,7 @@ import {
   searchThreads, postGmailImport,
 } from '../api'
 import Modal from '../components/Modal'
+import RichTextEditor from '../components/RichTextEditor'
 
 const STATUSES = ['not_contacted', 'contacted', 'responded', 'negotiating', 'confirmed', 'declined']
 
@@ -82,12 +83,23 @@ function applyTemplate(subject, body, { orgName, personName, projectName, projec
   return { subject: r(subject), body: r(body) }
 }
 
+function plainToHtml(text) {
+  if (!text) return ''
+  return text.split(/\n\n+/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')
+}
+
+function isHtmlEmpty(html) {
+  return !html || !html.replace(/<[^>]*>/g, '').trim()
+}
+
 // ── Thread View (messages + reply compose) ────────────────────────────────────
 
 function ThreadView({ org, thread, categoryId, onBack }) {
   const qc = useQueryClient()
   const [replyBody, setReplyBody] = useState('')
   const [ccPersonIds, setCcPersonIds] = useState([])
+  const [replyFiles, setReplyFiles] = useState([])
+  const replyEditorRef = useRef(null)
 
   const { data: threadData, isLoading, error } = useQuery({
     queryKey: ['thread-messages', org.id, thread.id],
@@ -96,16 +108,26 @@ function ThreadView({ org, thread, categoryId, onBack }) {
   })
 
   const reply = useMutation({
-    mutationFn: () => replyToThread(org.id, thread.id, { body: replyBody, cc_person_ids: ccPersonIds }),
+    mutationFn: () => {
+      const fd = new FormData()
+      fd.append('cc_person_ids', JSON.stringify(ccPersonIds))
+      fd.append('body', replyBody)
+      for (const f of replyFiles) fd.append('attachments', f)
+      return replyToThread(org.id, thread.id, fd)
+    },
     onSuccess: () => {
+      replyEditorRef.current?.setContent('')
       setReplyBody('')
       setCcPersonIds([])
+      setReplyFiles([])
       qc.invalidateQueries({ queryKey: ['thread-messages', org.id, thread.id] })
       qc.invalidateQueries({ queryKey: ['orgs', categoryId] })
     },
   })
 
   const toggleCc = (id) => setCcPersonIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
+
+  const removeReplyFile = (idx) => setReplyFiles(fs => fs.filter((_, i) => i !== idx))
 
   return (
     <div>
@@ -159,19 +181,38 @@ function ThreadView({ org, thread, categoryId, onBack }) {
             </div>
           </div>
         )}
-        <textarea
-          className="form-input"
-          rows={5}
+        <RichTextEditor
+          onChange={setReplyBody}
+          editorRef={replyEditorRef}
           placeholder="Write your reply..."
-          value={replyBody}
-          onChange={e => setReplyBody(e.target.value)}
+          minHeight={120}
         />
+        {replyFiles.length > 0 && (
+          <div className="attachment-list">
+            {replyFiles.map((f, i) => (
+              <span key={i} className="attachment-chip">
+                {f.name}
+                <button type="button" onClick={() => removeReplyFile(i)}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
         {reply.isError && <p className="error-msg" style={{ marginTop: 4 }}>{reply.error?.response?.data?.detail ?? 'Reply failed'}</p>}
         {reply.isSuccess && <p className="success-msg" style={{ marginTop: 4 }}>Reply sent!</p>}
         <div className="form-actions">
+          <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
+            Attach PDF
+            <input
+              type="file"
+              accept=".pdf,application/pdf"
+              multiple
+              style={{ display: 'none' }}
+              onChange={e => setReplyFiles(fs => [...fs, ...Array.from(e.target.files)])}
+            />
+          </label>
           <button
             className="btn btn-primary"
-            disabled={!replyBody.trim() || reply.isPending}
+            disabled={isHtmlEmpty(replyBody) || reply.isPending}
             onClick={() => reply.mutate()}
           >
             {reply.isPending ? 'Sending...' : 'Send Reply'}
@@ -194,6 +235,8 @@ function ComposeView({ org, project, categoryId, onCancel, onSuccess }) {
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [templateId, setTemplateId] = useState('')
+  const [attachments, setAttachments] = useState([])
+  const editorRef = useRef(null)
 
   const toPerson = org.people.find(p => p.id === Number(toPersonId))
 
@@ -209,16 +252,21 @@ function ComposeView({ org, project, categoryId, onCancel, onSuccess }) {
       projectDate: project?.date || '',
     })
     setSubject(rendered.subject)
-    setBody(rendered.body)
+    const html = plainToHtml(rendered.body)
+    editorRef.current?.setContent(html)
+    setBody(html)
   }
 
   const send = useMutation({
-    mutationFn: () => startEmail(org.id, {
-      to_person_id: Number(toPersonId),
-      cc_person_ids: ccPersonIds,
-      subject,
-      body,
-    }),
+    mutationFn: () => {
+      const fd = new FormData()
+      fd.append('to_person_id', Number(toPersonId))
+      fd.append('cc_person_ids', JSON.stringify(ccPersonIds))
+      fd.append('subject', subject)
+      fd.append('body', body)
+      for (const f of attachments) fd.append('attachments', f)
+      return startEmail(org.id, fd)
+    },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['orgs', categoryId] })
       onSuccess({ id: data.thread_id, gmail_thread_id: data.gmail_thread_id, subject: data.subject, created_at: new Date().toISOString() })
@@ -227,6 +275,7 @@ function ComposeView({ org, project, categoryId, onCancel, onSuccess }) {
 
   const toggleCc = (id) => setCcPersonIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
   const ccCandidates = org.people.filter(p => p.email && p.id !== Number(toPersonId))
+  const removeFile = (idx) => setAttachments(fs => fs.filter((_, i) => i !== idx))
 
   return (
     <div>
@@ -272,17 +321,39 @@ function ComposeView({ org, project, categoryId, onCancel, onSuccess }) {
             <input className="form-input" value={subject} onChange={e => setSubject(e.target.value)} placeholder="Subject..." />
           </label>
 
-          <label className="form-label">Body
-            <textarea className="form-input" rows={9} value={body} onChange={e => setBody(e.target.value)} placeholder="Write your email..." />
-          </label>
+          <div className="form-label">
+            <span>Body</span>
+            <RichTextEditor onChange={setBody} editorRef={editorRef} placeholder="Write your email..." minHeight={200} />
+          </div>
+
+          {attachments.length > 0 && (
+            <div className="attachment-list">
+              {attachments.map((f, i) => (
+                <span key={i} className="attachment-chip">
+                  {f.name}
+                  <button type="button" onClick={() => removeFile(i)}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
 
           {send.isError && <p className="error-msg">{send.error?.response?.data?.detail ?? 'Failed to send'}</p>}
 
           <div className="form-actions">
             <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
+            <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
+              Attach PDF
+              <input
+                type="file"
+                accept=".pdf,application/pdf"
+                multiple
+                style={{ display: 'none' }}
+                onChange={e => setAttachments(fs => [...fs, ...Array.from(e.target.files)])}
+              />
+            </label>
             <button
               className="btn btn-primary"
-              disabled={!toPersonId || !subject.trim() || !body.trim() || send.isPending}
+              disabled={!toPersonId || !subject.trim() || isHtmlEmpty(body) || send.isPending}
               onClick={() => send.mutate()}
             >
               {send.isPending ? 'Sending...' : 'Send Email'}

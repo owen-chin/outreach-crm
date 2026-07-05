@@ -1,6 +1,9 @@
 import base64
 import email as email_lib
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -56,29 +59,42 @@ def save_credentials(db: Session, creds: Credentials) -> None:
     db.commit()
 
 
-def send_email(creds: Credentials, to: str, subject: str, body: str, cc: list[str] = []) -> tuple[str, str]:
-    """Returns (message_id, thread_id)."""
-    service = build("gmail", "v1", credentials=creds)
-    message = MIMEText(body)
-    message["to"] = to
-    message["subject"] = subject
+def _build_message(to: str, subject: str, html_body: str, cc: list[str] = [], attachments: list[tuple[str, bytes, str]] = []) -> MIMEText | MIMEMultipart:
+    """Builds a MIME message supporting HTML body and optional file attachments."""
+    if attachments:
+        msg = MIMEMultipart("mixed")
+        msg.attach(MIMEText(html_body, "html"))
+        for filename, data, content_type in attachments:
+            main_type, sub_type = (content_type.split("/", 1) if "/" in content_type else ("application", "octet-stream"))
+            part = MIMEBase(main_type, sub_type)
+            part.set_payload(data)
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", "attachment", filename=filename)
+            msg.attach(part)
+    else:
+        msg = MIMEText(html_body, "html")
+    msg["to"] = to
+    msg["subject"] = subject
     if cc:
-        message["cc"] = ", ".join(cc)
-    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        msg["cc"] = ", ".join(cc)
+    return msg
+
+
+def send_email(creds: Credentials, to: str, subject: str, body: str, cc: list[str] = [], attachments: list[tuple[str, bytes, str]] = []) -> tuple[str, str]:
+    """Returns (message_id, thread_id). body is HTML."""
+    service = build("gmail", "v1", credentials=creds)
+    msg = _build_message(to, subject, body, cc, attachments)
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     sent = service.users().messages().send(userId="me", body={"raw": raw}).execute()
     return sent["id"], sent["threadId"]
 
 
-def reply_email(creds: Credentials, thread_id: str, to: str, subject: str, body: str, cc: list[str] = []) -> tuple[str, str]:
-    """Sends a reply into an existing thread. Returns (message_id, thread_id)."""
+def reply_email(creds: Credentials, thread_id: str, to: str, subject: str, body: str, cc: list[str] = [], attachments: list[tuple[str, bytes, str]] = []) -> tuple[str, str]:
+    """Sends a reply into an existing thread. Returns (message_id, thread_id). body is HTML."""
     service = build("gmail", "v1", credentials=creds)
     reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
-    message = MIMEText(body)
-    message["to"] = to
-    message["subject"] = reply_subject
-    if cc:
-        message["cc"] = ", ".join(cc)
-    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    msg = _build_message(to, reply_subject, body, cc, attachments)
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     sent = service.users().messages().send(
         userId="me",
         body={"raw": raw, "threadId": thread_id},

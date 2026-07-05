@@ -33,10 +33,10 @@ export const updatePerson = (orgId, personId, data) => api.patch(`/api/organizat
 export const deletePerson = (orgId, personId) => api.delete(`/api/organizations/${orgId}/people/${personId}`)
 
 // Threads
-export const startEmail = (orgId, data) => api.post(`/api/organizations/${orgId}/threads/start-email`, data).then(r => r.data)
+export const startEmail = (orgId, formData) => api.post(`/api/organizations/${orgId}/threads/start-email`, formData).then(r => r.data)
 export const linkThread = (orgId, data) => api.post(`/api/organizations/${orgId}/threads/link`, data).then(r => r.data)
 export const getThreadMessages = (orgId, threadId) => api.get(`/api/organizations/${orgId}/threads/${threadId}/messages`).then(r => r.data)
-export const replyToThread = (orgId, threadId, data) => api.post(`/api/organizations/${orgId}/threads/${threadId}/reply`, data).then(r => r.data)
+export const replyToThread = (orgId, threadId, formData) => api.post(`/api/organizations/${orgId}/threads/${threadId}/reply`, formData).then(r => r.data)
 
 // Email Templates
 export const getTemplates = () => api.get('/api/email-templates').then(r => r.data)
