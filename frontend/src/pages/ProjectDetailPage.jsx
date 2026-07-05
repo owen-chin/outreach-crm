@@ -33,6 +33,44 @@ function StatusSelect({ value, onChange, onClick }) {
   )
 }
 
+// ── Email display helpers ─────────────────────────────────────────────────────
+
+function parseSender(raw) {
+  const match = raw?.match(/^(.+?)\s*<([^>]+)>$/)
+  if (match) return { name: match[1].trim().replace(/^"|"$/g, ''), email: match[2].trim() }
+  return { name: raw || '', email: raw || '' }
+}
+
+function formatEmailDate(raw) {
+  if (!raw) return ''
+  try {
+    const d = new Date(raw)
+    const now = new Date()
+    const isToday = d.toDateString() === now.toDateString()
+    if (isToday) return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    const isThisYear = d.getFullYear() === now.getFullYear()
+    return d.toLocaleString('en-US', {
+      month: 'short', day: 'numeric',
+      ...(isThisYear ? {} : { year: 'numeric' }),
+      hour: 'numeric', minute: '2-digit',
+    })
+  } catch { return raw }
+}
+
+function decodeEntities(str) {
+  if (!str) return ''
+  const el = document.createElement('textarea')
+  el.innerHTML = str
+  return el.value
+}
+
+const AVATAR_COLORS = ['#4f46e5', '#0891b2', '#059669', '#d97706', '#7c3aed', '#db2777']
+function avatarColor(name) {
+  let h = 0
+  for (const c of (name || '')) h = h * 31 + c.charCodeAt(0)
+  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length]
+}
+
 // ── Template rendering (client-side) ─────────────────────────────────────────
 
 function applyTemplate(subject, body, { orgName, personName, projectName, projectDate }) {
@@ -81,16 +119,29 @@ function ThreadView({ org, thread, categoryId, onBack }) {
 
       {threadData && (
         <div className="thread-messages">
-          {threadData.messages.map(msg => (
-            <div key={msg.id} className="thread-message">
-              <div className="thread-message-header">
-                <span className="thread-sender">{msg.sender}</span>
-                <span className="muted thread-date">{msg.date}</span>
+          {threadData.messages.map(msg => {
+            const sender = parseSender(msg.sender)
+            const initial = (sender.name || sender.email || '?')[0].toUpperCase()
+            return (
+              <div key={msg.id} className="thread-message">
+                <div className="thread-msg-avatar" style={{ background: avatarColor(sender.name || sender.email) }}>
+                  {initial}
+                </div>
+                <div className="thread-msg-body">
+                  <div className="thread-msg-header">
+                    <div className="thread-msg-from">
+                      <span className="thread-msg-name">{sender.name || sender.email}</span>
+                      {sender.name && sender.email !== sender.name && (
+                        <span className="thread-msg-email">&lt;{sender.email}&gt;</span>
+                      )}
+                    </div>
+                    <span className="thread-msg-date">{formatEmailDate(msg.date)}</span>
+                  </div>
+                  <p className="thread-msg-snippet">{decodeEntities(msg.snippet)}</p>
+                </div>
               </div>
-              {msg.subject && <div className="thread-subject">{msg.subject}</div>}
-              <p className="thread-snippet">{msg.snippet}</p>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 

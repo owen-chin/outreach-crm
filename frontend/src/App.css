@@ -350,19 +350,36 @@ textarea.form-input { resize: vertical; }
 .status-select-declined { background: #fee2e2; color: #991b1b; }
 
 /* ── Thread view ── */
-.thread-messages { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; max-height: 300px; overflow-y: auto; }
+.thread-messages { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; max-height: 360px; overflow-y: auto; }
 .thread-message {
+  display: flex;
+  gap: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 12px 14px;
-  background: var(--bg);
+  padding: 14px 16px;
+  background: var(--surface);
 }
-.thread-message-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; gap: 8px; }
-.thread-sender { font-size: 13px; font-weight: 500; }
-.thread-date { font-size: 12px; flex-shrink: 0; }
-.thread-subject { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
-.thread-snippet { font-size: 13px; color: var(--text-muted); }
-.reply-compose { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
+.thread-msg-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  user-select: none;
+}
+.thread-msg-body { flex: 1; min-width: 0; }
+.thread-msg-header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+.thread-msg-from { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; min-width: 0; }
+.thread-msg-name { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.thread-msg-email { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.thread-msg-date { font-size: 12px; color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
+.thread-msg-snippet { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+.reply-compose { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; border-top: 1px solid var(--border); }
 .thread-id-cell { font-size: 11px; font-family: monospace; color: var(--text-muted); word-break: break-all; }
 
 /* ── Gmail import modal ── */
