@@ -48,6 +48,9 @@ export const deleteTemplate = (id) => api.delete(`/api/email-templates/${id}`)
 export const searchThreads = (email) => api.get('/api/gmail/search-threads', { params: { email } }).then(r => r.data)
 export const postGmailImport = (projectId, categoryId, data) => api.post(`/api/projects/${projectId}/categories/${categoryId}/gmail-import`, data).then(r => r.data)
 
+// Dashboard
+export const getDashboard = () => api.get('/api/dashboard').then(r => r.data)
+
 // Auth
 export const getAuthStatus = () => api.get('/api/auth/status').then(r => r.data)
 export const getGoogleAuthUrl = () => api.get('/api/auth/google').then(r => r.data)

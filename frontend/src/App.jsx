@@ -4,7 +4,7 @@ import './App.css'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import Layout from './components/Layout'
 import LoginPage from './pages/LoginPage'
-import ProjectsPage from './pages/ProjectsPage'
+import HomePage from './pages/HomePage'
 import ProjectDetailPage from './pages/ProjectDetailPage'
 import TemplatesPage from './pages/TemplatesPage'
 import SettingsPage from './pages/SettingsPage'
@@ -22,8 +22,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/" element={<ProtectedRoute><Layout><ProjectsPage /></Layout></ProtectedRoute>} />
-      <Route path="/projects/:id" element={<ProtectedRoute><Layout><ProjectDetailPage /></Layout></ProtectedRoute>} />
+      <Route path="/" element={<ProtectedRoute><Layout fullBleed><HomePage /></Layout></ProtectedRoute>} />
+      <Route path="/projects/:id" element={<ProtectedRoute><Layout fullBleed><ProjectDetailPage /></Layout></ProtectedRoute>} />
       <Route path="/templates" element={<ProtectedRoute><Layout><TemplatesPage /></Layout></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Layout><SettingsPage /></Layout></ProtectedRoute>} />
     </Routes>

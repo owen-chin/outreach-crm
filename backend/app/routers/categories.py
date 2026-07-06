@@ -101,6 +101,7 @@ def create_org_from_gmail(
     thread = Thread(
         organization_id=org.id,
         gmail_thread_id=payload.thread_id,
+        subject=payload.subject,
     )
     db.add(thread)
 

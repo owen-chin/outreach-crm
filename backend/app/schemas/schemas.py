@@ -215,6 +215,35 @@ class EmailTemplateOut(EmailTemplateBase):
     model_config = {"from_attributes": True}
 
 
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+
+class AttentionItemOut(BaseModel):
+    type: str  # new_reply | follow_up | deadline
+    project_id: int
+    project_name: str
+    org_id: Optional[int] = None
+    org_name: Optional[str] = None
+    note: str
+
+
+class ProjectDashboardOut(BaseModel):
+    id: int
+    name: str
+    date: Optional[Date] = None
+    description: Optional[str] = None
+    org_count: int
+    confirmed_count: int
+    negotiating_count: int
+    category_count: int
+    outreach_pct: float
+    updated_at: datetime
+
+
+class DashboardOut(BaseModel):
+    projects: List[ProjectDashboardOut]
+    attention: List[AttentionItemOut]
+
+
 # ── Gmail import ──────────────────────────────────────────────────────────────
 
 class GmailImportThread(BaseModel):
@@ -229,5 +258,6 @@ class GmailImportThread(BaseModel):
 class GmailImportCreate(BaseModel):
     thread_id: str
     org_name: str
+    subject: Optional[str] = None
     contact_name: Optional[str] = None
     email: Optional[str] = None

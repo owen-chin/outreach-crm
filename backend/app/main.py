@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routers import projects, categories, email_templates, auth, gmail, organizations, people, threads
+from app.routers import projects, categories, email_templates, auth, gmail, organizations, people, threads, dashboard
 
 app = FastAPI(title="Sponsor CRM")
 
@@ -13,6 +13,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(dashboard.router)
 app.include_router(projects.router)
 app.include_router(categories.router)
 app.include_router(organizations.router)

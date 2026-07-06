@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  getProject, getCategories, createCategory, deleteCategory,
+  getProject, getCategories, createCategory,
   getOrgs, createOrg, updateOrg, deleteOrg,
   addPerson, updatePerson, deletePerson,
   startEmail, linkThread, getThreadMessages, replyToThread,
@@ -11,28 +11,10 @@ import {
 } from '../api'
 import Modal from '../components/Modal'
 import RichTextEditor from '../components/RichTextEditor'
+import StatusBadge, { STATUS_LABELS, STATUS_DOT_COLORS } from '../components/StatusBadge'
+import { avatarColor, initials } from '../lib/avatar'
 
 const STATUSES = ['not_contacted', 'contacted', 'responded', 'negotiating', 'confirmed', 'declined']
-
-// ── StatusSelect ──────────────────────────────────────────────────────────────
-
-function StatusSelect({ value, onChange, onClick }) {
-  const ref = useRef(null)
-  useEffect(() => {
-    if (!ref.current) return
-    const tmp = document.createElement('span')
-    tmp.style.cssText = 'position:absolute;visibility:hidden;font-size:12px;font-weight:500;padding:2px 10px;white-space:nowrap'
-    tmp.textContent = value.replace(/_/g, ' ')
-    document.body.appendChild(tmp)
-    ref.current.style.width = `${tmp.offsetWidth}px`
-    document.body.removeChild(tmp)
-  }, [value])
-  return (
-    <select ref={ref} className={`status-select status-select-${value}`} value={value} onClick={onClick} onChange={onChange}>
-      {STATUSES.map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
-    </select>
-  )
-}
 
 // ── Email display helpers ─────────────────────────────────────────────────────
 
@@ -63,13 +45,6 @@ function decodeEntities(str) {
   const el = document.createElement('textarea')
   el.innerHTML = str
   return el.value
-}
-
-const AVATAR_COLORS = ['#4f46e5', '#0891b2', '#059669', '#d97706', '#7c3aed', '#db2777']
-function avatarColor(name) {
-  let h = 0
-  for (const c of (name || '')) h = h * 31 + c.charCodeAt(0)
-  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length]
 }
 
 // ── Template rendering (client-side) ─────────────────────────────────────────
@@ -285,7 +260,7 @@ function ComposeView({ org, project, categoryId, onCancel, onSuccess }) {
       </div>
 
       {peopleWithEmail.length === 0 ? (
-        <p className="empty" style={{ padding: '24px 0' }}>No contacts with an email address. Add one in the People tab first.</p>
+        <p className="empty" style={{ padding: '24px 0' }}>No contacts with an email address. Add one in Contacts first.</p>
       ) : (
         <div className="form" style={{ marginTop: 16 }}>
           <label className="form-label">To
@@ -463,9 +438,89 @@ function ConversationTab({ org, categoryId, project }) {
   )
 }
 
-// ── People Tab ────────────────────────────────────────────────────────────────
+// ── Org detail cards (right sidebar) ──────────────────────────────────────────
 
-function PeopleTab({ org, categoryId }) {
+function OrgDetailsCard({ org, categoryId }) {
+  const qc = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const [form, setForm] = useState({ name: org.name, website: org.website || '', ask_type: org.ask_type || '', status: org.status, notes: org.notes || '' })
+
+  useEffect(() => {
+    if (!editing) setForm({ name: org.name, website: org.website || '', ask_type: org.ask_type || '', status: org.status, notes: org.notes || '' })
+  }, [org, editing])
+
+  const update = useMutation({
+    mutationFn: (data) => updateOrg(categoryId, org.id, data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['orgs', categoryId] }); setEditing(false) },
+  })
+
+  const remove = useMutation({
+    mutationFn: () => deleteOrg(categoryId, org.id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['orgs', categoryId] }),
+  })
+
+  if (editing) {
+    return (
+      <div className="detail-card">
+        <form onSubmit={e => { e.preventDefault(); update.mutate({ name: form.name, website: form.website || null, ask_type: form.ask_type || null, status: form.status, notes: form.notes || null }) }} className="form">
+          <label className="form-label">Org Name *
+            <input className="form-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required />
+          </label>
+          <label className="form-label">Website
+            <input className="form-input" value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://..." />
+          </label>
+          <label className="form-label">Ask Type
+            <input className="form-input" value={form.ask_type} onChange={e => setForm(f => ({ ...f, ask_type: e.target.value }))} placeholder="e.g. money, product, paid performance" />
+          </label>
+          <label className="form-label">Status
+            <select className="form-input" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+              {STATUSES.map(s => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
+            </select>
+          </label>
+          <label className="form-label">Notes
+            <textarea className="form-input" rows={4} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+          </label>
+          {update.isError && <p className="error-msg">{update.error?.response?.data?.detail ?? 'Save failed'}</p>}
+          <div className="form-actions">
+            <button type="button" className="btn btn-ghost" onClick={() => setEditing(false)}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={update.isPending}>Save</button>
+          </div>
+        </form>
+      </div>
+    )
+  }
+
+  return (
+    <div className="detail-card">
+      <div className="detail-card-header">
+        <div>
+          <h3 className="detail-card-org-name">{org.name}</h3>
+          {org.website && <a className="detail-card-website" href={org.website} target="_blank" rel="noreferrer">{org.website}</a>}
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>Edit</button>
+          <button
+            className="btn btn-danger btn-sm"
+            onClick={() => { if (confirm(`Delete ${org.name}? This removes all its contacts and threads.`)) remove.mutate() }}
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+      <dl className="detail-list">
+        <dt>Status</dt><dd><StatusBadge status={org.status} /></dd>
+        <dt>Ask Type</dt><dd>{org.ask_type || '—'}</dd>
+        <dt>Last Contacted</dt><dd>{org.last_contacted_date ? new Date(org.last_contacted_date).toLocaleDateString() : '—'}</dd>
+      </dl>
+      <div className="detail-card-notes">
+        <span className="detail-card-notes-label">Notes</span>
+        <p>{org.notes || '—'}</p>
+      </div>
+    </div>
+  )
+}
+
+function OrgContactsCard({ org, categoryId }) {
   const qc = useQueryClient()
   const [showAdd, setShowAdd] = useState(false)
   const [addForm, setAddForm] = useState({ name: '', email: '', title: '' })
@@ -492,12 +547,10 @@ function PeopleTab({ org, categoryId }) {
   })
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <span className="muted" style={{ fontSize: 12 }}>
-          {org.people.length} person{org.people.length !== 1 ? 's' : ''}
-        </span>
-        <button className="btn btn-sm btn-ghost" onClick={() => setShowAdd(v => !v)}>+ Add Person</button>
+    <div className="detail-card">
+      <div className="detail-card-header">
+        <h3>Contacts · {org.people.length}</h3>
+        <button className="btn btn-ghost btn-sm" onClick={() => setShowAdd(v => !v)}>+ Add</button>
       </div>
 
       {org.people.length === 0 && !showAdd && (
@@ -528,6 +581,9 @@ function PeopleTab({ org, categoryId }) {
               </div>
             ) : (
               <div className="person-card-content">
+                <span className="person-avatar" style={{ background: avatarColor(person.name || person.email) }}>
+                  {initials(person.name || person.email)}
+                </span>
                 <div className="person-info">
                   <span className="person-name">{person.name || '—'}</span>
                   {person.title && <span className="person-title">{person.title}</span>}
@@ -567,102 +623,9 @@ function PeopleTab({ org, categoryId }) {
   )
 }
 
-// ── Overview Tab ──────────────────────────────────────────────────────────────
+// ── Gmail Import Modal (fixed category, or a picker across `categories`) ──────
 
-function OverviewTab({ org, categoryId }) {
-  const qc = useQueryClient()
-  const [editing, setEditing] = useState(false)
-  const [form, setForm] = useState({ name: org.name, website: org.website || '', ask_type: org.ask_type || '', status: org.status, notes: org.notes || '' })
-
-  useEffect(() => {
-    if (!editing) setForm({ name: org.name, website: org.website || '', ask_type: org.ask_type || '', status: org.status, notes: org.notes || '' })
-  }, [org, editing])
-
-  const update = useMutation({
-    mutationFn: (data) => updateOrg(categoryId, org.id, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['orgs', categoryId] }); setEditing(false) },
-  })
-
-  if (editing) {
-    return (
-      <form onSubmit={e => { e.preventDefault(); update.mutate({ name: form.name, website: form.website || null, ask_type: form.ask_type || null, status: form.status, notes: form.notes || null }) }} className="form">
-        <label className="form-label">Org Name *
-          <input className="form-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required />
-        </label>
-        <label className="form-label">Website
-          <input className="form-input" value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://..." />
-        </label>
-        <label className="form-label">Ask Type
-          <input className="form-input" value={form.ask_type} onChange={e => setForm(f => ({ ...f, ask_type: e.target.value }))} placeholder="e.g. money, product, paid performance" />
-        </label>
-        <label className="form-label">Status
-          <select className="form-input" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-            {STATUSES.map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
-          </select>
-        </label>
-        <label className="form-label">Notes
-          <textarea className="form-input" rows={4} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
-        </label>
-        {update.isError && <p className="error-msg">{update.error?.response?.data?.detail ?? 'Save failed'}</p>}
-        <div className="form-actions">
-          <button type="button" className="btn btn-ghost" onClick={() => setEditing(false)}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={update.isPending}>Save</button>
-        </div>
-      </form>
-    )
-  }
-
-  return (
-    <div>
-      <dl className="detail-list">
-        <dt>Website</dt>
-        <dd>{org.website ? <a href={org.website} target="_blank" rel="noreferrer">{org.website}</a> : '—'}</dd>
-        <dt>Ask Type</dt><dd>{org.ask_type || '—'}</dd>
-        <dt>Status</dt><dd><span className={`badge badge-${org.status}`}>{org.status.replace(/_/g, ' ')}</span></dd>
-        <dt>Last Contacted</dt><dd>{org.last_contacted_date ? new Date(org.last_contacted_date).toLocaleDateString() : '—'}</dd>
-        <dt>Notes</dt><dd className="notes">{org.notes || '—'}</dd>
-      </dl>
-      <div className="form-actions">
-        <button className="btn btn-ghost" onClick={() => setEditing(true)}>Edit</button>
-      </div>
-    </div>
-  )
-}
-
-// ── Org Modal ─────────────────────────────────────────────────────────────────
-
-function OrgModal({ orgId, categoryId, project, onClose }) {
-  const [tab, setTab] = useState('overview')
-
-  const { data: org } = useQuery({
-    queryKey: ['orgs', categoryId],
-    queryFn: () => getOrgs(categoryId),
-    select: orgs => orgs?.find(o => o.id === orgId),
-  })
-
-  if (!org) return null
-
-  return (
-    <Modal title={org.name} onClose={onClose} wide>
-      <div className="tabs">
-        <button className={`tab ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>Overview</button>
-        <button className={`tab ${tab === 'people' ? 'active' : ''}`} onClick={() => setTab('people')}>
-          People {org.people.length > 0 && <span className="tab-count">{org.people.length}</span>}
-        </button>
-        <button className={`tab ${tab === 'conversation' ? 'active' : ''}`} onClick={() => setTab('conversation')}>
-          Conversation {org.threads.length > 0 && <span className="tab-count">{org.threads.length}</span>}
-        </button>
-      </div>
-      {tab === 'overview' && <OverviewTab org={org} categoryId={categoryId} />}
-      {tab === 'people' && <PeopleTab org={org} categoryId={categoryId} />}
-      {tab === 'conversation' && <ConversationTab org={org} categoryId={categoryId} project={project} />}
-    </Modal>
-  )
-}
-
-// ── Gmail Import Modal ────────────────────────────────────────────────────────
-
-function GmailImportModal({ projectId, category, onClose }) {
+function GmailImportModal({ projectId, category, categories, onClose }) {
   const qc = useQueryClient()
   const [email, setEmail] = useState('')
   const [threads, setThreads] = useState(null)
@@ -670,10 +633,11 @@ function GmailImportModal({ projectId, category, onClose }) {
   const [searching, setSearching] = useState(false)
   const [selected, setSelected] = useState(null)
   const [importForm, setImportForm] = useState({ org_name: '', contact_name: '', email: '' })
+  const [categoryId, setCategoryId] = useState(category?.id ?? categories?.[0]?.id ?? '')
 
   const importThread = useMutation({
-    mutationFn: () => postGmailImport(projectId, category.id, { thread_id: selected.thread_id, ...importForm }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['orgs', category.id] }); onClose() },
+    mutationFn: () => postGmailImport(projectId, Number(categoryId), { thread_id: selected.thread_id, subject: selected.subject, ...importForm }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['orgs', Number(categoryId)] }); onClose() },
   })
 
   const handleSearch = async () => {
@@ -702,6 +666,13 @@ function GmailImportModal({ projectId, category, onClose }) {
           {selected.snippet && <p className="gmail-thread-snippet">{selected.snippet}</p>}
         </div>
         <form onSubmit={e => { e.preventDefault(); importThread.mutate() }} className="form">
+          {categories && !category && (
+            <label className="form-label">Category *
+              <select className="form-input" value={categoryId} onChange={e => setCategoryId(e.target.value)} required>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </label>
+          )}
           <label className="form-label">Organization Name *
             <input className="form-input" value={importForm.org_name} onChange={e => setImportForm(f => ({ ...f, org_name: e.target.value }))} required />
           </label>
@@ -714,7 +685,7 @@ function GmailImportModal({ projectId, category, onClose }) {
           {importThread.isError && <p className="error-msg">{importThread.error?.response?.data?.detail ?? 'Import failed'}</p>}
           <div className="form-actions">
             <button type="button" className="btn btn-ghost" onClick={() => setSelected(null)}>Back</button>
-            <button type="submit" className="btn btn-primary" disabled={importThread.isPending}>Import</button>
+            <button type="submit" className="btn btn-primary" disabled={importThread.isPending || !categoryId}>Import</button>
           </div>
         </form>
       </Modal>
@@ -722,7 +693,7 @@ function GmailImportModal({ projectId, category, onClose }) {
   }
 
   return (
-    <Modal title={`Import from Gmail — ${category.name}`} onClose={onClose} wide>
+    <Modal title={category ? `Import from Gmail — ${category.name}` : 'Import from Gmail'} onClose={onClose} wide>
       <div className="form">
         <p className="muted" style={{ marginBottom: 4 }}>Enter the sender's email address to find their thread in Gmail.</p>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -768,173 +739,387 @@ function GmailImportModal({ projectId, category, onClose }) {
   )
 }
 
-// ── Category Section ──────────────────────────────────────────────────────────
+// ── Add Organization Modal (fixed category, or a picker across `categories`) ──
 
-function CategorySection({ category, projectId, project }) {
+function AddOrgModal({ category, categories, onClose }) {
   const qc = useQueryClient()
-  const [showAddOrg, setShowAddOrg] = useState(false)
-  const [showGmailImport, setShowGmailImport] = useState(false)
-  const [selectedOrgId, setSelectedOrgId] = useState(null)
-  const [orgForm, setOrgForm] = useState({ name: '', website: '', ask_type: '', contact_name: '', contact_email: '' })
-
-  const { data: orgs = [] } = useQuery({
-    queryKey: ['orgs', category.id],
-    queryFn: () => getOrgs(category.id),
-  })
+  const [categoryId, setCategoryId] = useState(category?.id ?? categories?.[0]?.id ?? '')
+  const [form, setForm] = useState({ name: '', website: '', ask_type: '', contact_name: '', contact_email: '' })
 
   const addOrg = useMutation({
-    mutationFn: (data) => createOrg(category.id, data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['orgs', category.id] })
-      setShowAddOrg(false)
-      setOrgForm({ name: '', website: '', ask_type: '', contact_name: '', contact_email: '' })
-    },
-  })
-
-  const patchOrg = useMutation({
-    mutationFn: ({ id, data }) => updateOrg(category.id, id, data),
-    onMutate: async ({ id, data }) => {
-      await qc.cancelQueries({ queryKey: ['orgs', category.id] })
-      const prev = qc.getQueryData(['orgs', category.id])
-      qc.setQueryData(['orgs', category.id], orgs => orgs?.map(o => o.id === id ? { ...o, ...data } : o))
-      return { prev }
-    },
-    onError: (_, __, ctx) => qc.setQueryData(['orgs', category.id], ctx.prev),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['orgs', category.id] }),
-  })
-
-  const removeOrg = useMutation({
-    mutationFn: (id) => deleteOrg(category.id, id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['orgs', category.id] }),
-  })
-
-  const removeCategory = useMutation({
-    mutationFn: () => deleteCategory(projectId, category.id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['categories', projectId] }),
+    mutationFn: (data) => createOrg(Number(categoryId), data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['orgs', Number(categoryId)] }); onClose() },
   })
 
   return (
-    <div className="category-section">
-      <div className="category-header">
-        <h3>{category.name}</h3>
-        <div className="category-actions">
-          <button className="btn btn-sm btn-ghost" onClick={() => setShowGmailImport(true)}>↓ Import from Gmail</button>
-          <button className="btn btn-sm btn-ghost" onClick={() => setShowAddOrg(true)}>+ Add Org</button>
-          <button className="btn btn-sm btn-danger" onClick={() => { if (confirm(`Delete category "${category.name}"?`)) removeCategory.mutate() }}>Delete</button>
+    <Modal title={category ? `Add Organization to ${category.name}` : 'Add Organization'} onClose={onClose}>
+      <form
+        onSubmit={e => {
+          e.preventDefault()
+          addOrg.mutate({
+            name: form.name,
+            website: form.website || null,
+            ask_type: form.ask_type || null,
+            contact_name: form.contact_name || null,
+            contact_email: form.contact_email || null,
+          })
+        }}
+        className="form"
+      >
+        {categories && !category && (
+          <label className="form-label">Category *
+            <select className="form-input" value={categoryId} onChange={e => setCategoryId(e.target.value)} required>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+        )}
+        <label className="form-label">Organization Name *
+          <input className="form-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required />
+        </label>
+        <label className="form-label">Website
+          <input className="form-input" value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://..." />
+        </label>
+        <label className="form-label">Ask Type
+          <input className="form-input" value={form.ask_type} onChange={e => setForm(f => ({ ...f, ask_type: e.target.value }))} placeholder="e.g. money, product, paid performance" />
+        </label>
+        <label className="form-label">Contact Name
+          <input className="form-input" value={form.contact_name} onChange={e => setForm(f => ({ ...f, contact_name: e.target.value }))} />
+        </label>
+        <label className="form-label">Contact Email
+          <input className="form-input" type="email" value={form.contact_email} onChange={e => setForm(f => ({ ...f, contact_email: e.target.value }))} />
+        </label>
+        {addOrg.isError && <p className="error-msg">{addOrg.error?.response?.data?.detail ?? 'Failed to add organization'}</p>}
+        <div className="form-actions">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={addOrg.isPending || !categoryId}>Add</button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+// ── Project Subheader (shared by Inbox + Board) ───────────────────────────────
+
+function ProjectSubheader({ project, view, onViewChange, orgs, onImport, onAddCategory, onAddOrg }) {
+  const navigate = useNavigate()
+  const confirmedCount = orgs.filter(o => o.status === 'confirmed').length
+  const negotiatingCount = orgs.filter(o => o.status === 'negotiating').length
+
+  const subline = view === 'board'
+    ? [project?.date, `${orgs.length} organization${orgs.length !== 1 ? 's' : ''}`].filter(Boolean).join(' · ')
+    : [project?.date, project?.description].filter(Boolean).join(' · ')
+
+  return (
+    <div className="project-subheader">
+      <div className="project-subheader-left">
+        <button className="btn btn-ghost btn-sm" onClick={() => navigate(-1)}>← Back</button>
+        <div>
+          <h1 className="project-subheader-title">{project?.name ?? '...'}</h1>
+          {subline && <p className="project-subheader-subline">{subline}</p>}
         </div>
       </div>
 
-      {orgs.length === 0 ? (
-        <p className="empty small">No organizations yet.</p>
-      ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Organization</th>
-              <th>Contact</th>
-              <th>Ask Type</th>
-              <th>Status</th>
-              <th>Last Contacted</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {orgs.map(org => {
-              const primary = org.people[0]
-              return (
-                <tr key={org.id} className="table-row" onClick={() => setSelectedOrgId(org.id)}>
-                  <td><strong>{org.name}</strong></td>
-                  <td>
-                    {primary
-                      ? <>{primary.name || primary.email}{org.people.length > 1 && <span className="muted"> +{org.people.length - 1}</span>}</>
-                      : <span className="muted">—</span>
-                    }
-                  </td>
-                  <td>{org.ask_type || '—'}</td>
-                  <td>
-                    <StatusSelect
-                      value={org.status}
-                      onClick={e => e.stopPropagation()}
-                      onChange={e => patchOrg.mutate({ id: org.id, data: { status: e.target.value } })}
-                    />
-                  </td>
-                  <td>{org.last_contacted_date ? new Date(org.last_contacted_date).toLocaleDateString() : '—'}</td>
-                  <td>
+      <div className="project-subheader-right">
+        {view === 'inbox' && (
+          <div className="subheader-counters">
+            <span className="subheader-counter subheader-counter-confirmed">{confirmedCount} Confirmed</span>
+            <span className="subheader-counter subheader-counter-negotiating">{negotiatingCount} In talks</span>
+            <span className="subheader-counter">{orgs.length} Total</span>
+          </div>
+        )}
+
+        <div className="view-switch">
+          <button className={`view-switch-btn ${view === 'inbox' ? 'active' : ''}`} onClick={() => onViewChange('inbox')}>Inbox</button>
+          <button className={`view-switch-btn ${view === 'board' ? 'active' : ''}`} onClick={() => onViewChange('board')}>Board</button>
+        </div>
+
+        <button className="btn btn-ghost btn-sm" onClick={onImport}>⤓ Import from Gmail</button>
+        {view === 'inbox'
+          ? <button className="btn btn-primary btn-sm" onClick={onAddCategory}>+ Add Category</button>
+          : <button className="btn btn-primary btn-sm" onClick={onAddOrg}>+ Add org</button>
+        }
+      </div>
+    </div>
+  )
+}
+
+// ── Project Inbox (#4a) ────────────────────────────────────────────────────────
+
+const INBOX_FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'confirmed', label: 'Confirmed' },
+  { key: 'negotiating', label: 'In talks' },
+]
+
+function ProjectInbox({ project, categories, orgs, onAddCategory }) {
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [selectedOrgId, setSelectedOrgId] = useState(null)
+  const [importCategory, setImportCategory] = useState(null)
+  const [addOrgCategory, setAddOrgCategory] = useState(null)
+  const [collapsedIds, setCollapsedIds] = useState(() => new Set())
+
+  const toggleCategory = (id) => setCollapsedIds(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
+
+  const filtered = orgs.filter(o => {
+    if (statusFilter !== 'all' && o.status !== statusFilter) return false
+    if (search.trim() && !o.name.toLowerCase().includes(search.trim().toLowerCase())) return false
+    return true
+  })
+
+  const selectedOrg = orgs.find(o => o.id === selectedOrgId) ?? null
+
+  const counts = {
+    all: orgs.length,
+    confirmed: orgs.filter(o => o.status === 'confirmed').length,
+    negotiating: orgs.filter(o => o.status === 'negotiating').length,
+  }
+
+  return (
+    <div className="inbox-layout">
+      <aside className="inbox-sidebar">
+        <div className="inbox-sidebar-top">
+          <input className="inbox-search-input" placeholder="Search organizations..." value={search} onChange={e => setSearch(e.target.value)} />
+          <div className="inbox-filter-chips">
+            {INBOX_FILTERS.map(f => (
+              <button
+                key={f.key}
+                className={`inbox-filter-chip ${statusFilter === f.key ? 'active' : ''}`}
+                onClick={() => setStatusFilter(f.key)}
+              >
+                {f.label} {counts[f.key]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="inbox-org-list">
+          {categories.map(cat => {
+            const catOrgs = filtered.filter(o => o.category.id === cat.id)
+            if (catOrgs.length === 0) return null
+            const collapsed = collapsedIds.has(cat.id)
+            return (
+              <div key={cat.id} className="inbox-category-group">
+                <div className="inbox-category-header">
+                  <button className="inbox-category-toggle" onClick={() => toggleCategory(cat.id)}>
+                    <span className={`inbox-category-chevron ${collapsed ? 'collapsed' : ''}`}>▾</span>
+                    <span>{cat.name.toUpperCase()} · {catOrgs.length}</span>
+                  </button>
+                  <div className="inbox-category-actions">
+                    <button className="icon-chip" title="Import from Gmail" onClick={() => setImportCategory(cat)}>⤓</button>
+                    <button className="icon-chip" title="Add organization" onClick={() => setAddOrgCategory(cat)}>+</button>
+                  </div>
+                </div>
+                {!collapsed && catOrgs.map(org => {
+                  const primary = org.people[0]
+                  return (
                     <button
-                      className="btn btn-sm btn-danger"
-                      onClick={e => { e.stopPropagation(); if (confirm(`Delete ${org.name}?`)) removeOrg.mutate(org.id) }}
+                      key={org.id}
+                      className={`inbox-org-row ${selectedOrgId === org.id ? 'selected' : ''}`}
+                      onClick={() => setSelectedOrgId(org.id)}
                     >
-                      Delete
+                      <span className="inbox-org-dot" style={{ background: STATUS_DOT_COLORS[org.status] }} />
+                      <span className="inbox-org-info">
+                        <span className="inbox-org-name">{org.name}</span>
+                        <span className="inbox-org-meta">
+                          {primary ? (primary.name || primary.email) : 'No contact'} · {STATUS_LABELS[org.status]}
+                        </span>
+                      </span>
                     </button>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      )}
+                  )
+                })}
+              </div>
+            )
+          })}
+          {categories.length === 0 && <p className="empty small">No categories yet.</p>}
+          {categories.length > 0 && filtered.length === 0 && <p className="empty small">No organizations match.</p>}
+        </div>
 
-      {showAddOrg && (
-        <Modal title={`Add Organization to ${category.name}`} onClose={() => setShowAddOrg(false)}>
-          <form
-            onSubmit={e => {
-              e.preventDefault()
-              addOrg.mutate({
-                name: orgForm.name,
-                website: orgForm.website || null,
-                ask_type: orgForm.ask_type || null,
-                contact_name: orgForm.contact_name || null,
-                contact_email: orgForm.contact_email || null,
-              })
-            }}
-            className="form"
-          >
-            <label className="form-label">Organization Name *
-              <input className="form-input" value={orgForm.name} onChange={e => setOrgForm(f => ({ ...f, name: e.target.value }))} required />
-            </label>
-            <label className="form-label">Website
-              <input className="form-input" value={orgForm.website} onChange={e => setOrgForm(f => ({ ...f, website: e.target.value }))} placeholder="https://..." />
-            </label>
-            <label className="form-label">Ask Type
-              <input className="form-input" value={orgForm.ask_type} onChange={e => setOrgForm(f => ({ ...f, ask_type: e.target.value }))} placeholder="e.g. money, product, paid performance" />
-            </label>
-            <label className="form-label">Contact Name
-              <input className="form-input" value={orgForm.contact_name} onChange={e => setOrgForm(f => ({ ...f, contact_name: e.target.value }))} />
-            </label>
-            <label className="form-label">Contact Email
-              <input className="form-input" type="email" value={orgForm.contact_email} onChange={e => setOrgForm(f => ({ ...f, contact_email: e.target.value }))} />
-            </label>
-            {addOrg.isError && <p className="error-msg">{addOrg.error?.response?.data?.detail ?? 'Failed to add organization'}</p>}
-            <div className="form-actions">
-              <button type="button" className="btn btn-ghost" onClick={() => setShowAddOrg(false)}>Cancel</button>
-              <button type="submit" className="btn btn-primary" disabled={addOrg.isPending}>Add</button>
+        <button className="inbox-add-category-btn" onClick={onAddCategory}>+ New category</button>
+      </aside>
+
+      <section className="inbox-center">
+        {selectedOrg ? (
+          <>
+            <div className="inbox-center-header">
+              <h2>{selectedOrg.name}</h2>
+              <StatusBadge status={selectedOrg.status} />
             </div>
-          </form>
-        </Modal>
-      )}
+            <div className="inbox-center-body">
+              <ConversationTab key={selectedOrg.id} org={selectedOrg} categoryId={selectedOrg.category.id} project={project} />
+            </div>
+          </>
+        ) : (
+          <div className="inbox-center-empty">
+            <p className="muted">Select an organization to see its conversation.</p>
+          </div>
+        )}
+      </section>
 
-      {showGmailImport && (
-        <GmailImportModal projectId={projectId} category={category} onClose={() => setShowGmailImport(false)} />
-      )}
+      <aside className="inbox-right">
+        {selectedOrg ? (
+          <>
+            <OrgDetailsCard key={`details-${selectedOrg.id}`} org={selectedOrg} categoryId={selectedOrg.category.id} />
+            <OrgContactsCard key={`contacts-${selectedOrg.id}`} org={selectedOrg} categoryId={selectedOrg.category.id} />
+          </>
+        ) : (
+          <p className="empty small">No organization selected.</p>
+        )}
+      </aside>
 
-      {selectedOrgId && (
-        <OrgModal orgId={selectedOrgId} categoryId={category.id} project={project} onClose={() => setSelectedOrgId(null)} />
+      {importCategory && (
+        <GmailImportModal projectId={project?.id} category={importCategory} onClose={() => setImportCategory(null)} />
+      )}
+      {addOrgCategory && (
+        <AddOrgModal category={addOrgCategory} onClose={() => setAddOrgCategory(null)} />
       )}
     </div>
   )
 }
 
-// ── Project Detail Page ───────────────────────────────────────────────────────
+// ── Kanban Board (#3b) ─────────────────────────────────────────────────────────
+
+const BOARD_FILTER_ALL = 'all'
+
+function KanbanBoard({ categories, orgs, onAddOrg }) {
+  const qc = useQueryClient()
+  const [search, setSearch] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState(BOARD_FILTER_ALL)
+  const [dragOverStatus, setDragOverStatus] = useState(null)
+
+  const patchStatus = useMutation({
+    mutationFn: ({ categoryId, orgId, status }) => updateOrg(categoryId, orgId, { status }),
+    onMutate: async ({ categoryId, orgId, status }) => {
+      await qc.cancelQueries({ queryKey: ['orgs', categoryId] })
+      const prev = qc.getQueryData(['orgs', categoryId])
+      qc.setQueryData(['orgs', categoryId], list => list?.map(o => o.id === orgId ? { ...o, status } : o))
+      return { prev, categoryId }
+    },
+    onError: (_, __, ctx) => { if (ctx) qc.setQueryData(['orgs', ctx.categoryId], ctx.prev) },
+    onSettled: (_, __, vars) => qc.invalidateQueries({ queryKey: ['orgs', vars.categoryId] }),
+  })
+
+  const filtered = orgs.filter(o => {
+    if (categoryFilter !== BOARD_FILTER_ALL && o.category.id !== categoryFilter) return false
+    if (search.trim() && !o.name.toLowerCase().includes(search.trim().toLowerCase())) return false
+    return true
+  })
+
+  const handleDrop = (e, status) => {
+    e.preventDefault()
+    setDragOverStatus(null)
+    let payload
+    try { payload = JSON.parse(e.dataTransfer.getData('text/plain')) } catch { return }
+    const org = orgs.find(o => o.id === payload?.orgId)
+    if (!org || org.status === status) return
+    patchStatus.mutate({ categoryId: org.category.id, orgId: org.id, status })
+  }
+
+  return (
+    <div className="board-layout">
+      <div className="board-filter-bar">
+        <input className="board-search-input" placeholder="Search organizations..." value={search} onChange={e => setSearch(e.target.value)} />
+        <div className="board-category-chips">
+          <button className={`board-chip ${categoryFilter === BOARD_FILTER_ALL ? 'active' : ''}`} onClick={() => setCategoryFilter(BOARD_FILTER_ALL)}>All</button>
+          {categories.map(c => (
+            <button key={c.id} className={`board-chip ${categoryFilter === c.id ? 'active' : ''}`} onClick={() => setCategoryFilter(c.id)}>{c.name}</button>
+          ))}
+        </div>
+      </div>
+
+      <div className="board-columns">
+        {STATUSES.map(status => {
+          const columnOrgs = filtered.filter(o => o.status === status)
+          return (
+            <div
+              key={status}
+              className={`board-column ${dragOverStatus === status ? 'drag-over' : ''}`}
+              onDragOver={e => { e.preventDefault(); setDragOverStatus(status) }}
+              onDragLeave={() => setDragOverStatus(s => s === status ? null : s)}
+              onDrop={e => handleDrop(e, status)}
+            >
+              <div className="board-column-header">
+                <span className="board-column-dot" style={{ background: STATUS_DOT_COLORS[status] }} />
+                <span className="board-column-label">{STATUS_LABELS[status]}</span>
+                <span className="board-column-count">{columnOrgs.length}</span>
+              </div>
+              <div className="board-column-body">
+                {columnOrgs.map(org => {
+                  const primary = org.people[0]
+                  return (
+                    <div
+                      key={org.id}
+                      className="board-card"
+                      draggable
+                      onDragStart={e => e.dataTransfer.setData('text/plain', JSON.stringify({ orgId: org.id }))}
+                    >
+                      <div className="board-card-top">
+                        <span className="board-card-category">{org.category.name}</span>
+                        {org.last_contacted_date && (
+                          <span className="board-card-date">{new Date(org.last_contacted_date).toLocaleDateString()}</span>
+                        )}
+                      </div>
+                      <div className="board-card-name">{org.name}</div>
+                      {org.ask_type && <div className="board-card-ask">{org.ask_type}</div>}
+                      {primary && (
+                        <div className="board-card-footer">
+                          <span className="board-card-avatar" style={{ background: avatarColor(primary.name || primary.email) }}>
+                            {initials(primary.name || primary.email)}
+                          </span>
+                          <span className="board-card-contact">{primary.name || primary.email}</span>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+                <button className="board-add-org-btn" onClick={onAddOrg}>+ Add org</button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Project Detail Page (shell) ───────────────────────────────────────────────
 
 export default function ProjectDetailPage() {
   const { id } = useParams()
-  const navigate = useNavigate()
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const view = searchParams.get('view') === 'board' ? 'board' : 'inbox'
+
   const [showAddCategory, setShowAddCategory] = useState(false)
   const [categoryName, setCategoryName] = useState('')
+  const [showGmailImport, setShowGmailImport] = useState(false)
+  const [showAddOrg, setShowAddOrg] = useState(false)
 
   const { data: project } = useQuery({ queryKey: ['project', id], queryFn: () => getProject(id) })
   const { data: categories = [] } = useQuery({ queryKey: ['categories', id], queryFn: () => getCategories(id) })
+
+  const orgQueries = useQueries({
+    queries: categories.map(cat => ({
+      queryKey: ['orgs', cat.id],
+      queryFn: () => getOrgs(cat.id),
+    })),
+  })
+
+  const orgs = categories.flatMap((cat, i) => (orgQueries[i]?.data ?? []).map(o => ({ ...o, category: cat })))
+
+  const setView = (v) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (v === 'inbox') next.delete('view')
+      else next.set('view', v)
+      return next
+    }, { replace: true })
+  }
 
   const addCategory = useMutation({
     mutationFn: () => createCategory(id, { name: categoryName }),
@@ -942,24 +1127,22 @@ export default function ProjectDetailPage() {
   })
 
   return (
-    <div>
-      <div className="page-header">
-        <div>
-          <button className="btn btn-ghost btn-sm" onClick={() => navigate('/')}>← Back</button>
-          <h1>{project?.name ?? '...'}</h1>
-          {project?.date && <p className="muted">{project.date}</p>}
-          {project?.description && <p>{project.description}</p>}
-        </div>
-        <button className="btn btn-primary" onClick={() => setShowAddCategory(true)}>+ Add Category</button>
-      </div>
+    <div className="project-detail-shell">
+      <ProjectSubheader
+        project={project}
+        view={view}
+        onViewChange={setView}
+        orgs={orgs}
+        onImport={() => setShowGmailImport(true)}
+        onAddCategory={() => setShowAddCategory(true)}
+        onAddOrg={() => setShowAddOrg(true)}
+      />
 
-      {categories.length === 0 && (
-        <p className="empty">No categories yet. Add one to start tracking organizations.</p>
+      {view === 'inbox' ? (
+        <ProjectInbox project={project} categories={categories} orgs={orgs} onAddCategory={() => setShowAddCategory(true)} />
+      ) : (
+        <KanbanBoard categories={categories} orgs={orgs} onAddOrg={() => setShowAddOrg(true)} />
       )}
-
-      {categories.map(cat => (
-        <CategorySection key={cat.id} category={cat} projectId={id} project={project} />
-      ))}
 
       {showAddCategory && (
         <Modal title="Add Category" onClose={() => setShowAddCategory(false)}>
@@ -967,12 +1150,20 @@ export default function ProjectDetailPage() {
             <label className="form-label">Name *
               <input className="form-input" value={categoryName} onChange={e => setCategoryName(e.target.value)} placeholder="e.g. Sponsors, Performers, Venues" required />
             </label>
+            {addCategory.isError && <p className="error-msg">{addCategory.error?.response?.data?.detail ?? 'Failed to add category'}</p>}
             <div className="form-actions">
               <button type="button" className="btn btn-ghost" onClick={() => setShowAddCategory(false)}>Cancel</button>
               <button type="submit" className="btn btn-primary" disabled={addCategory.isPending}>Add</button>
             </div>
           </form>
         </Modal>
+      )}
+
+      {showGmailImport && (
+        <GmailImportModal projectId={id} categories={categories} onClose={() => setShowGmailImport(false)} />
+      )}
+      {showAddOrg && (
+        <AddOrgModal categories={categories} onClose={() => setShowAddOrg(false)} />
       )}
     </div>
   )
