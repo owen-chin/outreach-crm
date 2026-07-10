@@ -470,6 +470,7 @@ textarea.form-input { resize: vertical; }
 .empty.small { padding: 16px 20px; text-align: left; font-size: 13px; }
 .success-msg { color: #065f46; font-weight: 500; margin-bottom: 12px; }
 .error-msg { color: var(--danger); font-size: 13px; }
+.warn-msg { color: #92400e; background: #fef3c7; border-radius: var(--radius); padding: 8px 12px; font-size: 13px; }
 
 /* ── Tab count pill ── */
 .tab-count {
@@ -701,6 +702,31 @@ textarea.form-input { resize: vertical; }
   padding: 3px 12px;
 }
 .attachment-chip-download:hover { background: #ddd6fe; }
+
+/* ── AI Draft chat ── */
+.ai-chat { display: flex; flex-direction: column; width: 480px; max-width: 100%; }
+.ai-chat-quick-options { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.ai-chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 340px;
+  min-height: 60px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+}
+.ai-chat-msg {
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-width: 88%;
+}
+.ai-chat-msg-user { align-self: flex-end; background: var(--primary); color: #fff; }
+.ai-chat-msg-model { align-self: flex-start; background: var(--bg); border: 1px solid var(--border); color: var(--text); }
+.ai-chat-input-row { display: flex; gap: 8px; }
+.ai-chat-input-row .form-input { flex: 1; }
 
 /* ── Home dashboard (#3a) ── */
 .home-layout { display: flex; flex: 1; min-height: 0; }

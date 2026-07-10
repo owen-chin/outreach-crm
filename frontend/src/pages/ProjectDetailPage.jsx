@@ -10,7 +10,7 @@ import {
   getTemplates,
   searchThreads, postGmailImport,
   attachmentUrl, getAttachmentBlob,
-  getDraft, saveDraft, deleteDraft, draftAttachmentUrl,
+  getDraft, saveDraft, deleteDraft, draftAttachmentUrl, generateAIDraftChat,
 } from '../api'
 import Modal from '../components/Modal'
 import RichTextEditor from '../components/RichTextEditor'
@@ -521,6 +521,14 @@ function ThreadView({ org, thread, categoryId, onBack }) {
         {reply.isSuccess && <p className="success-msg" style={{ marginTop: 4 }}>Reply sent!</p>}
         <DraftStatusLine {...draftSync} />
         <div className="form-actions">
+          <AIDraftButton
+            org={org} thread={thread}
+            onApply={(data) => {
+              const html = plainToHtml(data.body)
+              replyEditorRef.current?.setContent(html)
+              setReplyBody(html)
+            }}
+          />
           <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
             Attach File
             <input
@@ -546,6 +554,107 @@ function ThreadView({ org, thread, categoryId, onBack }) {
         </div>
       </div>
     </div>
+  )
+}
+
+// ── AI Draft ─────────────────────────────────────────────────────────────────
+
+function AIDraftButton({ org, thread, toPersonId, onApply, disabled }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button type="button" className="btn btn-ghost btn-sm" disabled={disabled} onClick={() => setOpen(true)}>
+        ✨ AI Draft
+      </button>
+      {open && (
+        <AIDraftChatModal
+          org={org} thread={thread} toPersonId={toPersonId}
+          onApply={onApply} onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  )
+}
+
+function AIDraftChatModal({ org, thread, toPersonId, onApply, onClose }) {
+  const [messages, setMessages] = useState([])
+  const [input, setInput] = useState('')
+  const scrollRef = useRef(null)
+
+  const quickOptions = thread
+    ? ['Draft a reply', 'Follow up — no response yet', 'Politely decline', 'Ask a clarifying question']
+    : ['Cold intro & make the ask', 'Warm intro (we were referred)', 'Short & casual']
+
+  const send = useMutation({
+    mutationFn: (text) => {
+      const nextMessages = [...messages, { role: 'user', text }]
+      setMessages(nextMessages)
+      return generateAIDraftChat(org.id, {
+        thread_id: thread?.id ?? null,
+        to_person_id: toPersonId ? Number(toPersonId) : null,
+        messages: nextMessages,
+      })
+    },
+    onSuccess: (data) => {
+      setMessages(m => [...m, { role: 'model', text: data.reply }])
+      if (data.body) onApply({ subject: data.subject, body: data.body })
+    },
+  })
+
+  const submit = (text) => {
+    const t = (text ?? input).trim()
+    if (!t || send.isPending) return
+    send.mutate(t)
+    setInput('')
+  }
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+  }, [messages, send.isPending])
+
+  return (
+    <Modal title="✨ AI Draft" onClose={onClose}>
+      <div className="ai-chat">
+        {thread && (
+          <p className="muted" style={{ margin: '0 0 10px', fontSize: 12 }}>
+            Reads the full thread before drafting.
+          </p>
+        )}
+        {messages.length === 0 && (
+          <div className="ai-chat-quick-options">
+            {quickOptions.map(opt => (
+              <button key={opt} type="button" className="btn btn-ghost btn-sm" onClick={() => submit(opt)}>
+                {opt}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="ai-chat-messages" ref={scrollRef}>
+          {messages.map((m, i) => (
+            <div key={i} className={`ai-chat-msg ai-chat-msg-${m.role}`}>{m.text}</div>
+          ))}
+          {send.isPending && <div className="ai-chat-msg ai-chat-msg-model muted">Thinking...</div>}
+        </div>
+        {send.isError && send.error?.response?.status === 429 ? (
+          <p className="warn-msg">{send.error.response.data?.detail ?? 'Daily AI draft limit reached — try again later.'}</p>
+        ) : send.isError ? (
+          <p className="error-msg">{send.error?.response?.data?.detail ?? 'AI draft failed'}</p>
+        ) : null}
+        <div className="ai-chat-input-row">
+          <input
+            className="form-input"
+            placeholder={messages.length === 0 ? 'Or describe what you want...' : "Ask for changes, e.g. 'make it shorter'"}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') submit() }}
+            disabled={send.isPending}
+          />
+          <button type="button" className="btn btn-primary btn-sm" disabled={send.isPending || !input.trim()} onClick={() => submit()}>
+            Send
+          </button>
+        </div>
+      </div>
+    </Modal>
   )
 }
 
@@ -685,6 +794,15 @@ function ComposeView({ org, project, categoryId, onCancel, onSuccess }) {
 
           <div className="form-actions">
             <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
+            <AIDraftButton
+              org={org} thread={null} toPersonId={toPersonId}
+              onApply={(data) => {
+                if (data.subject) setSubject(data.subject)
+                const html = plainToHtml(data.body)
+                editorRef.current?.setContent(html)
+                setBody(html)
+              }}
+            />
             <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
               Attach File
               <input

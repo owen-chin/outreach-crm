@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:8000/api/auth/google/callback"
     frontend_url: str = "http://localhost:5173"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-flash-lite-latest"
 
     model_config = {"env_file": ".env"}
 

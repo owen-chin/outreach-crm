@@ -52,6 +52,8 @@ export const saveDraft = (orgId, formData) => api.put(`/api/organizations/${orgI
 export const deleteDraft = (orgId, draftId) => api.delete(`/api/organizations/${orgId}/drafts/${draftId}`)
 export const draftAttachmentUrl = (orgId, draftId, attachmentId) =>
   `/api/organizations/${orgId}/drafts/${draftId}/attachments/${attachmentId}`
+export const generateAIDraftChat = (orgId, payload) =>
+  api.post(`/api/organizations/${orgId}/drafts/ai-draft`, payload).then(r => r.data)
 
 // Email Templates
 export const getTemplates = () => api.get('/api/email-templates').then(r => r.data)

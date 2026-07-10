@@ -211,6 +211,23 @@ class DraftOut(BaseModel):
     attachments: List[DraftAttachmentOut] = []
 
 
+class AIChatMessage(BaseModel):
+    role: str  # "user" or "model"
+    text: str
+
+
+class AIDraftChatRequest(BaseModel):
+    thread_id: Optional[int] = None
+    to_person_id: Optional[int] = None
+    messages: List[AIChatMessage]
+
+
+class AIDraftChatResponse(BaseModel):
+    reply: str
+    subject: Optional[str] = None
+    body: Optional[str] = None
+
+
 # ── EmailLog ──────────────────────────────────────────────────────────────────
 
 class EmailLogOut(BaseModel):

@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.db.database import get_db
-from app.models.models import Organization, Thread, EmailDraft, EmailDraftAttachment, DraftStatus
-from app.schemas.schemas import DraftOut, DraftAttachmentOut
+from app.models.models import Organization, Person, Thread, EmailDraft, EmailDraftAttachment, DraftStatus
+from app.schemas.schemas import DraftOut, DraftAttachmentOut, AIDraftChatRequest, AIDraftChatResponse
+from app.services.ai_draft import generate_chat_reply, AIDraftQuotaExceeded
 
 router = APIRouter(prefix="/api/organizations/{org_id}/drafts", tags=["drafts"])
 
@@ -119,6 +120,40 @@ async def upsert_draft(
     db.commit()
     db.refresh(draft)
     return _to_draft_out(draft)
+
+
+@router.post("/ai-draft", response_model=AIDraftChatResponse)
+def ai_draft(org_id: int, payload: AIDraftChatRequest, db: Session = Depends(get_db)):
+    org = _get_org_or_404(org_id, db)
+
+    if not payload.messages:
+        raise HTTPException(status_code=422, detail="messages must not be empty")
+
+    thread = None
+    if payload.thread_id is not None:
+        thread = db.query(Thread).filter(
+            Thread.id == payload.thread_id, Thread.organization_id == org_id
+        ).first()
+        if not thread:
+            raise HTTPException(status_code=404, detail="Thread not found")
+
+    to_person = None
+    if payload.to_person_id is not None:
+        to_person = db.query(Person).filter(
+            Person.id == payload.to_person_id, Person.organization_id == org_id
+        ).first()
+
+    try:
+        result = generate_chat_reply(
+            db, org, to_person=to_person, thread=thread,
+            messages=[m.model_dump() for m in payload.messages],
+        )
+    except AIDraftQuotaExceeded as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return AIDraftChatResponse(**result)
 
 
 @router.delete("/{draft_id}", status_code=204)
