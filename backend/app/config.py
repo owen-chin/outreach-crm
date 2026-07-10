@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:5173"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-flash-lite-latest"
+    internal_api_secret: str = ""
 
     model_config = {"env_file": ".env"}
 
