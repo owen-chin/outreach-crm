@@ -2,7 +2,7 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 function ToolbarBtn({ active, onClick, title, children }) {
   return (
@@ -17,7 +17,13 @@ function ToolbarBtn({ active, onClick, title, children }) {
   )
 }
 
-export default function RichTextEditor({ onChange, placeholder = 'Write your message...', minHeight = 200, editorRef }) {
+export default function RichTextEditor({ onChange, onBlur, placeholder = 'Write your message...', minHeight = 200, editorRef }) {
+  // Routed through a ref so the blur handler always calls the latest closure — callers'
+  // onBlur handlers close over state (CC list, attachments, scheduled time) that changes
+  // every render, unlike the stable onChange={setX} setter Tiptap otherwise captures once.
+  const onBlurRef = useRef(onBlur)
+  useEffect(() => { onBlurRef.current = onBlur }, [onBlur])
+
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -28,6 +34,7 @@ export default function RichTextEditor({ onChange, placeholder = 'Write your mes
       attributes: { style: `min-height:${minHeight}px` },
     },
     onUpdate: ({ editor }) => onChange?.(editor.getHTML()),
+    onBlur: ({ editor }) => onBlurRef.current?.(editor.getHTML()),
   })
 
   // Expose imperative API via editorRef

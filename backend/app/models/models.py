@@ -1,6 +1,7 @@
 import enum
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, Date, Enum, ForeignKey, JSON
+    Column, Integer, String, Text, DateTime, Date, Enum, ForeignKey, JSON,
+    Index, LargeBinary, text
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -133,3 +134,52 @@ class OAuthToken(Base):
     service = Column(String, nullable=False, unique=True)
     token_data = Column(JSON, nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class DraftStatus(str, enum.Enum):
+    draft = "draft"
+    scheduled = "scheduled"
+    sending = "sending"
+    failed = "failed"
+
+
+class EmailDraft(Base):
+    __tablename__ = "email_drafts"
+    __table_args__ = (
+        Index("ux_email_drafts_compose", "organization_id", unique=True,
+              postgresql_where=text("thread_id IS NULL")),
+        Index("ux_email_drafts_reply", "thread_id", unique=True,
+              postgresql_where=text("thread_id IS NOT NULL")),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    thread_id = Column(Integer, ForeignKey("threads.id", ondelete="CASCADE"), nullable=True)
+    to_person_id = Column(Integer, ForeignKey("people.id", ondelete="SET NULL"), nullable=True)
+    cc_person_ids = Column(Text, default="[]")  # JSON-encoded list[int]
+    subject = Column(String)
+    body = Column(Text, nullable=False, default="")
+    send_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(Enum(DraftStatus), default=DraftStatus.draft, nullable=False)
+    failure_message = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    organization = relationship("Organization")
+    thread = relationship("Thread")
+    to_person = relationship("Person")
+    attachments = relationship("EmailDraftAttachment", back_populates="draft", cascade="all, delete-orphan")
+
+
+class EmailDraftAttachment(Base):
+    __tablename__ = "email_draft_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    draft_id = Column(Integer, ForeignKey("email_drafts.id", ondelete="CASCADE"), nullable=False)
+    filename = Column(String, nullable=False)
+    mime_type = Column(String, nullable=False)
+    size = Column(Integer, nullable=False)
+    data = Column(LargeBinary, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    draft = relationship("EmailDraft", back_populates="attachments")

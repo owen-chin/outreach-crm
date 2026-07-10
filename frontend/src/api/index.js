@@ -38,6 +38,21 @@ export const linkThread = (orgId, data) => api.post(`/api/organizations/${orgId}
 export const getThreadMessages = (orgId, threadId) => api.get(`/api/organizations/${orgId}/threads/${threadId}/messages`).then(r => r.data)
 export const replyToThread = (orgId, threadId, formData) => api.post(`/api/organizations/${orgId}/threads/${threadId}/reply`, formData).then(r => r.data)
 
+// Message attachments — auth is a Bearer header (not a cookie), so these can't be
+// used as a plain <img src>/<a href>; fetch as a blob and hand the caller an object URL.
+export const attachmentUrl = (orgId, threadId, messageId, att) =>
+  `/api/organizations/${orgId}/threads/${threadId}/messages/${messageId}/attachments/${att.attachment_id}` +
+  `?filename=${encodeURIComponent(att.filename || '')}&mime_type=${encodeURIComponent(att.mime_type || '')}`
+export const getAttachmentBlob = (url) => api.get(url, { responseType: 'blob' }).then(r => r.data)
+
+// Drafts / scheduled send
+export const getDraft = (orgId, threadId) =>
+  api.get(`/api/organizations/${orgId}/drafts`, { params: threadId ? { thread_id: threadId } : {} }).then(r => r.data)
+export const saveDraft = (orgId, formData) => api.put(`/api/organizations/${orgId}/drafts`, formData).then(r => r.data)
+export const deleteDraft = (orgId, draftId) => api.delete(`/api/organizations/${orgId}/drafts/${draftId}`)
+export const draftAttachmentUrl = (orgId, draftId, attachmentId) =>
+  `/api/organizations/${orgId}/drafts/${draftId}/attachments/${attachmentId}`
+
 // Email Templates
 export const getTemplates = () => api.get('/api/email-templates').then(r => r.data)
 export const createTemplate = (data) => api.post('/api/email-templates', data).then(r => r.data)

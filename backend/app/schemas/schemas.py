@@ -101,12 +101,22 @@ class ThreadSummaryOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AttachmentMeta(BaseModel):
+    attachment_id: str
+    filename: Optional[str] = None
+    mime_type: str
+    size: int = 0
+    inline: bool = False
+
+
 class ThreadMessage(BaseModel):
     id: str
     sender: str
     subject: str
     date: str
     snippet: str
+    body_html: Optional[str] = None
+    attachments: List[AttachmentMeta] = []
 
 
 class ThreadMessagesOut(BaseModel):
@@ -173,6 +183,32 @@ class SendEmailResponse(BaseModel):
     thread_id: int
     gmail_thread_id: str
     subject: str
+
+
+# ── Drafts / scheduled send ────────────────────────────────────────────────────
+
+class DraftAttachmentOut(BaseModel):
+    id: int
+    filename: str
+    mime_type: str
+    size: int
+
+    model_config = {"from_attributes": True}
+
+
+class DraftOut(BaseModel):
+    id: int
+    organization_id: int
+    thread_id: Optional[int] = None
+    to_person_id: Optional[int] = None
+    cc_person_ids: List[int] = []
+    subject: Optional[str] = None
+    body: str
+    send_at: Optional[datetime] = None
+    status: str
+    failure_message: Optional[str] = None
+    updated_at: datetime
+    attachments: List[DraftAttachmentOut] = []
 
 
 # ── EmailLog ──────────────────────────────────────────────────────────────────

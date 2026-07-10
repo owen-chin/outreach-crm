@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
+import DOMPurify from 'dompurify'
 import {
   getProject, getCategories, createCategory,
   getOrgs, createOrg, updateOrg, deleteOrg,
@@ -8,6 +9,8 @@ import {
   startEmail, linkThread, getThreadMessages, replyToThread,
   getTemplates,
   searchThreads, postGmailImport,
+  attachmentUrl, getAttachmentBlob,
+  getDraft, saveDraft, deleteDraft, draftAttachmentUrl,
 } from '../api'
 import Modal from '../components/Modal'
 import RichTextEditor from '../components/RichTextEditor'
@@ -47,6 +50,88 @@ function decodeEntities(str) {
   return el.value
 }
 
+// Gmail rejects outgoing messages over ~25MB total.
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+function totalFileSize(files) {
+  return files.reduce((sum, f) => sum + f.size, 0)
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
+  return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`
+}
+
+// Fetches any inline images referenced in a received message's HTML body (their src
+// points at our own protected attachment endpoint, which needs the Bearer header a
+// plain <img> tag can't send) and swaps them for blob object URLs before sanitizing.
+async function renderMessageHtml(rawHtml) {
+  let html = rawHtml
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const srcs = [...new Set(
+    Array.from(doc.querySelectorAll('img[src^="/api/organizations/"]')).map(img => img.getAttribute('src'))
+  )]
+  for (const src of srcs) {
+    try {
+      const blob = await getAttachmentBlob(src)
+      html = html.split(src).join(URL.createObjectURL(blob))
+    } catch {
+      // leave the original src — the image just won't load
+    }
+  }
+  return DOMPurify.sanitize(html)
+}
+
+async function downloadReceivedAttachment(orgId, threadId, messageId, att) {
+  const blob = await getAttachmentBlob(attachmentUrl(orgId, threadId, messageId, att))
+  const objectUrl = URL.createObjectURL(blob)
+  if (att.mime_type?.startsWith('image/') || att.mime_type === 'application/pdf') {
+    window.open(objectUrl, '_blank')
+  } else {
+    const a = document.createElement('a')
+    a.href = objectUrl
+    a.download = att.filename || 'attachment'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }
+}
+
+function MessageBody({ msg, orgId, threadId }) {
+  const { data: html, isLoading } = useQuery({
+    queryKey: ['thread-msg-html', orgId, threadId, msg.id, msg.body_html],
+    queryFn: () => renderMessageHtml(msg.body_html),
+    enabled: !!msg.body_html,
+    staleTime: Infinity,
+  })
+
+  if (!msg.body_html || isLoading || !html) {
+    return <p className="thread-msg-snippet">{decodeEntities(msg.snippet)}</p>
+  }
+  return <div className="thread-msg-html" dangerouslySetInnerHTML={{ __html: html }} />
+}
+
+function ReceivedAttachments({ msg, orgId, threadId }) {
+  const files = (msg.attachments || []).filter(a => !a.inline)
+  if (files.length === 0) return null
+  return (
+    <div className="attachment-list">
+      {files.map(a => (
+        <button
+          key={a.attachment_id}
+          type="button"
+          className="attachment-chip attachment-chip-download"
+          onClick={() => downloadReceivedAttachment(orgId, threadId, msg.id, a)}
+        >
+          📎 {a.filename || 'attachment'}{a.size ? ` (${formatBytes(a.size)})` : ''}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // ── Template rendering (client-side) ─────────────────────────────────────────
 
 function applyTemplate(subject, body, { orgName, personName, projectName, projectDate }) {
@@ -67,6 +152,226 @@ function isHtmlEmpty(html) {
   return !html || !html.replace(/<[^>]*>/g, '').trim()
 }
 
+// ── Draft autosave + scheduled send (shared by ComposeView and ThreadView) ────────
+
+function toLocalInputValue(isoString) {
+  const d = new Date(isoString)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+async function filesFromDraftAttachments(orgId, draft) {
+  const files = []
+  for (const att of draft.attachments || []) {
+    try {
+      const blob = await getAttachmentBlob(draftAttachmentUrl(orgId, draft.id, att.id))
+      files.push(new File([blob], att.filename, { type: att.mime_type }))
+    } catch {
+      // skip attachments that fail to restore — user can re-add them if needed
+    }
+  }
+  return files
+}
+
+// threadId=null means the "compose new email" context; setSubject/setToPersonId are
+// only passed there. Hydrates an existing draft once per context, autosaves on blur
+// (skipped when nothing changed since the last save), and exposes schedule/cancel.
+function useDraftSync({
+  orgId, threadId, editorRef,
+  body, setBody, ccPersonIds, setCcPersonIds,
+  subject, setSubject, toPersonId, setToPersonId,
+  files, setFiles,
+}) {
+  const qc = useQueryClient()
+  const queryKey = ['draft', orgId, threadId ?? 'compose']
+  const { data: draft } = useQuery({ queryKey, queryFn: () => getDraft(orgId, threadId) })
+
+  const [draftId, setDraftId] = useState(null)
+  const [scheduledFor, setScheduledFor] = useState('')
+  const [status, setStatus] = useState(null)
+  const [failureMessage, setFailureMessage] = useState(null)
+  const hydratedRef = useRef(false)
+  const lastSavedRef = useRef(null)
+
+  useEffect(() => { hydratedRef.current = false }, [orgId, threadId])
+
+  useEffect(() => {
+    if (hydratedRef.current || !draft) return
+    hydratedRef.current = true
+    setDraftId(draft.id)
+    setStatus(draft.status)
+    setFailureMessage(draft.failure_message)
+    setScheduledFor(draft.send_at ? toLocalInputValue(draft.send_at) : '')
+    setBody(draft.body || '')
+    editorRef.current?.setContent(draft.body || '')
+    setCcPersonIds(draft.cc_person_ids || [])
+    if (setSubject) setSubject(draft.subject || '')
+    if (setToPersonId && draft.to_person_id) setToPersonId(draft.to_person_id)
+    filesFromDraftAttachments(orgId, draft).then(setFiles)
+    lastSavedRef.current = {
+      body: draft.body || '', cc: draft.cc_person_ids || [],
+      subject: draft.subject || '', toPersonId: draft.to_person_id ?? null,
+      fileNames: (draft.attachments || []).map(a => a.filename),
+    }
+  }, [draft])
+
+  const save = useMutation({
+    mutationFn: (overrides = {}) => {
+      const fd = new FormData()
+      if (threadId) fd.append('thread_id', threadId)
+      if (setToPersonId) {
+        const tpId = overrides.toPersonId ?? toPersonId
+        if (tpId) fd.append('to_person_id', tpId)
+      }
+      fd.append('cc_person_ids', JSON.stringify(overrides.ccPersonIds ?? ccPersonIds))
+      if (setSubject) fd.append('subject', overrides.subject ?? subject ?? '')
+      fd.append('body', overrides.body ?? body)
+      const sendAt = 'send_at' in overrides ? overrides.send_at : scheduledFor
+      if (sendAt) fd.append('send_at', new Date(sendAt).toISOString())
+      for (const f of (overrides.files ?? files)) fd.append('attachments', f)
+      return saveDraft(orgId, fd)
+    },
+    onSuccess: (data) => {
+      setDraftId(data.id)
+      setStatus(data.status)
+      setFailureMessage(data.failure_message)
+      setScheduledFor(data.send_at ? toLocalInputValue(data.send_at) : '')
+      lastSavedRef.current = {
+        body: data.body, cc: data.cc_person_ids,
+        subject: data.subject || '', toPersonId: data.to_person_id ?? null,
+        fileNames: (data.attachments || []).map(a => a.filename),
+      }
+      qc.setQueryData(queryKey, data)
+    },
+  })
+
+  const handleBlur = (html) => {
+    if (isHtmlEmpty(html) && files.length === 0) return
+    const current = {
+      body: html, cc: ccPersonIds, subject: subject ?? '',
+      toPersonId: toPersonId ?? null, fileNames: files.map(f => f.name),
+    }
+    const last = lastSavedRef.current
+    const unchanged = last
+      && last.body === current.body
+      && JSON.stringify(last.cc) === JSON.stringify(current.cc)
+      && last.subject === current.subject
+      && String(last.toPersonId ?? '') === String(current.toPersonId ?? '')
+      && JSON.stringify(last.fileNames) === JSON.stringify(current.fileNames)
+    if (unchanged) return
+    save.mutate({ body: html })
+  }
+
+  const scheduleSend = (localDatetimeValue) => {
+    setScheduledFor(localDatetimeValue)
+    save.mutate({ send_at: localDatetimeValue })
+  }
+
+  const cancelSchedule = () => {
+    setScheduledFor('')
+    save.mutate({ send_at: null })
+  }
+
+  const clearAfterSend = () => {
+    setDraftId(null)
+    setStatus(null)
+    setFailureMessage(null)
+    setScheduledFor('')
+    lastSavedRef.current = null
+    qc.setQueryData(queryKey, null)
+  }
+
+  const discardDraft = async () => {
+    const id = draftId
+    setDraftId(null)
+    setStatus(null)
+    setFailureMessage(null)
+    setScheduledFor('')
+    lastSavedRef.current = null
+    setBody('')
+    editorRef.current?.setContent('')
+    setCcPersonIds([])
+    if (setSubject) setSubject('')
+    setFiles([])
+    qc.setQueryData(queryKey, null)
+    if (id) {
+      try { await deleteDraft(orgId, id) } catch { /* already gone or unreachable — local state is already cleared */ }
+    }
+  }
+
+  return {
+    draftId, scheduledFor, status, failureMessage,
+    isSaving: save.isPending, saveError: save.isError,
+    handleBlur, scheduleSend, cancelSchedule, clearAfterSend, discardDraft,
+  }
+}
+
+function DraftStatusLine({ draftId, isSaving, status, failureMessage, saveError, discardDraft }) {
+  if (!draftId && !isSaving) return null
+  const discard = draftId && (
+    <button
+      type="button"
+      onClick={discardDraft}
+      style={{ background: 'none', border: 'none', padding: 0, marginLeft: 8, color: 'var(--text-muted)', textDecoration: 'underline', cursor: 'pointer', font: 'inherit', fontSize: 12 }}
+    >
+      Discard draft
+    </button>
+  )
+  if (isSaving) return <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>Saving draft…</p>
+  if (saveError) return <p className="error-msg" style={{ marginTop: 4 }}>Couldn't save draft — try again{discard}</p>
+  if (status === 'failed') return <p className="error-msg" style={{ marginTop: 4 }}>Scheduled send failed: {failureMessage}{discard}</p>
+  return <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>Draft saved{discard}</p>
+}
+
+function ScheduleSendControl({ scheduledFor, status, onSchedule, onCancelSchedule }) {
+  const [open, setOpen] = useState(false)
+  const [value, setValue] = useState(scheduledFor)
+
+  useEffect(() => { setValue(scheduledFor) }, [scheduledFor])
+
+  if (status === 'scheduled' && scheduledFor) {
+    return (
+      <span className="muted" style={{ fontSize: 12 }}>
+        Scheduled for {new Date(scheduledFor).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+        {' — '}
+        <button
+          type="button"
+          onClick={onCancelSchedule}
+          style={{ background: 'none', border: 'none', padding: 0, color: 'var(--primary)', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
+        >
+          Cancel
+        </button>
+      </span>
+    )
+  }
+
+  if (!open) {
+    return <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(true)}>Schedule send</button>
+  }
+
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <input
+        type="datetime-local"
+        className="form-input"
+        style={{ padding: '4px 8px', fontSize: 12, width: 'auto' }}
+        value={value}
+        min={toLocalInputValue(new Date(Date.now() + 60000).toISOString())}
+        onChange={e => setValue(e.target.value)}
+      />
+      <button
+        type="button"
+        className="btn btn-primary btn-sm"
+        disabled={!value}
+        onClick={() => { onSchedule(value); setOpen(false) }}
+      >
+        Schedule
+      </button>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>Cancel</button>
+    </span>
+  )
+}
+
 // ── Thread View (messages + reply compose) ────────────────────────────────────
 
 function ThreadView({ org, thread, categoryId, onBack }) {
@@ -75,11 +380,33 @@ function ThreadView({ org, thread, categoryId, onBack }) {
   const [ccPersonIds, setCcPersonIds] = useState([])
   const [replyFiles, setReplyFiles] = useState([])
   const replyEditorRef = useRef(null)
+  const [expandedIds, setExpandedIds] = useState(null)
 
   const { data: threadData, isLoading, error } = useQuery({
     queryKey: ['thread-messages', org.id, thread.id],
     queryFn: () => getThreadMessages(org.id, thread.id),
     retry: false,
+  })
+
+  // Default to Gmail-style collapse: only the most recent message starts expanded.
+  useEffect(() => {
+    if (threadData?.messages?.length) {
+      setExpandedIds(new Set([threadData.messages[threadData.messages.length - 1].id]))
+    }
+  }, [threadData?.messages?.length, thread.id])
+
+  const toggleExpanded = (id) => setExpandedIds(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
+
+  const draftSync = useDraftSync({
+    orgId: org.id, threadId: thread.id, editorRef: replyEditorRef,
+    body: replyBody, setBody: setReplyBody,
+    ccPersonIds, setCcPersonIds,
+    files: replyFiles, setFiles: setReplyFiles,
   })
 
   const reply = useMutation({
@@ -88,6 +415,7 @@ function ThreadView({ org, thread, categoryId, onBack }) {
       fd.append('cc_person_ids', JSON.stringify(ccPersonIds))
       fd.append('body', replyBody)
       for (const f of replyFiles) fd.append('attachments', f)
+      if (draftSync.draftId) fd.append('draft_id', draftSync.draftId)
       return replyToThread(org.id, thread.id, fd)
     },
     onSuccess: () => {
@@ -95,6 +423,7 @@ function ThreadView({ org, thread, categoryId, onBack }) {
       setReplyBody('')
       setCcPersonIds([])
       setReplyFiles([])
+      draftSync.clearAfterSend()
       qc.invalidateQueries({ queryKey: ['thread-messages', org.id, thread.id] })
       qc.invalidateQueries({ queryKey: ['orgs', categoryId] })
     },
@@ -103,6 +432,7 @@ function ThreadView({ org, thread, categoryId, onBack }) {
   const toggleCc = (id) => setCcPersonIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
 
   const removeReplyFile = (idx) => setReplyFiles(fs => fs.filter((_, i) => i !== idx))
+  const replyAttachmentsTooLarge = totalFileSize(replyFiles) > MAX_ATTACHMENT_BYTES
 
   return (
     <div>
@@ -119,22 +449,31 @@ function ThreadView({ org, thread, categoryId, onBack }) {
           {threadData.messages.map(msg => {
             const sender = parseSender(msg.sender)
             const initial = (sender.name || sender.email || '?')[0].toUpperCase()
+            const expanded = expandedIds?.has(msg.id) ?? true
             return (
-              <div key={msg.id} className="thread-message">
+              <div key={msg.id} className={`thread-message ${expanded ? 'is-expanded' : 'is-collapsed'}`}>
                 <div className="thread-msg-avatar" style={{ background: avatarColor(sender.name || sender.email) }}>
                   {initial}
                 </div>
                 <div className="thread-msg-body">
-                  <div className="thread-msg-header">
+                  <div className="thread-msg-header" onClick={() => toggleExpanded(msg.id)}>
                     <div className="thread-msg-from">
                       <span className="thread-msg-name">{sender.name || sender.email}</span>
-                      {sender.name && sender.email !== sender.name && (
+                      {expanded && sender.name && sender.email !== sender.name && (
                         <span className="thread-msg-email">&lt;{sender.email}&gt;</span>
+                      )}
+                      {!expanded && (
+                        <span className="thread-msg-preview">{decodeEntities(msg.snippet)}</span>
                       )}
                     </div>
                     <span className="thread-msg-date">{formatEmailDate(msg.date)}</span>
                   </div>
-                  <p className="thread-msg-snippet">{decodeEntities(msg.snippet)}</p>
+                  {expanded && (
+                    <>
+                      <MessageBody msg={msg} orgId={org.id} threadId={thread.id} />
+                      <ReceivedAttachments msg={msg} orgId={org.id} threadId={thread.id} />
+                    </>
+                  )}
                 </div>
               </div>
             )
@@ -158,6 +497,7 @@ function ThreadView({ org, thread, categoryId, onBack }) {
         )}
         <RichTextEditor
           onChange={setReplyBody}
+          onBlur={draftSync.handleBlur}
           editorRef={replyEditorRef}
           placeholder="Write your reply..."
           minHeight={120}
@@ -172,22 +512,33 @@ function ThreadView({ org, thread, categoryId, onBack }) {
             ))}
           </div>
         )}
+        {replyAttachmentsTooLarge && (
+          <p className="error-msg" style={{ marginTop: 4 }}>
+            Attachments total {formatBytes(totalFileSize(replyFiles))} — Gmail's limit is 25MB. Remove a file before sending.
+          </p>
+        )}
         {reply.isError && <p className="error-msg" style={{ marginTop: 4 }}>{reply.error?.response?.data?.detail ?? 'Reply failed'}</p>}
         {reply.isSuccess && <p className="success-msg" style={{ marginTop: 4 }}>Reply sent!</p>}
+        <DraftStatusLine {...draftSync} />
         <div className="form-actions">
           <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
-            Attach PDF
+            Attach File
             <input
               type="file"
-              accept=".pdf,application/pdf"
               multiple
               style={{ display: 'none' }}
               onChange={e => setReplyFiles(fs => [...fs, ...Array.from(e.target.files)])}
             />
           </label>
+          <ScheduleSendControl
+            scheduledFor={draftSync.scheduledFor}
+            status={draftSync.status}
+            onSchedule={draftSync.scheduleSend}
+            onCancelSchedule={draftSync.cancelSchedule}
+          />
           <button
             className="btn btn-primary"
-            disabled={isHtmlEmpty(replyBody) || reply.isPending}
+            disabled={isHtmlEmpty(replyBody) || reply.isPending || replyAttachmentsTooLarge}
             onClick={() => reply.mutate()}
           >
             {reply.isPending ? 'Sending...' : 'Send Reply'}
@@ -215,6 +566,13 @@ function ComposeView({ org, project, categoryId, onCancel, onSuccess }) {
 
   const toPerson = org.people.find(p => p.id === Number(toPersonId))
 
+  const draftSync = useDraftSync({
+    orgId: org.id, threadId: null, editorRef,
+    body, setBody, ccPersonIds, setCcPersonIds,
+    subject, setSubject, toPersonId, setToPersonId,
+    files: attachments, setFiles: setAttachments,
+  })
+
   const loadTemplate = (tid) => {
     setTemplateId(tid)
     if (!tid) return
@@ -240,9 +598,11 @@ function ComposeView({ org, project, categoryId, onCancel, onSuccess }) {
       fd.append('subject', subject)
       fd.append('body', body)
       for (const f of attachments) fd.append('attachments', f)
+      if (draftSync.draftId) fd.append('draft_id', draftSync.draftId)
       return startEmail(org.id, fd)
     },
     onSuccess: (data) => {
+      draftSync.clearAfterSend()
       qc.invalidateQueries({ queryKey: ['orgs', categoryId] })
       onSuccess({ id: data.thread_id, gmail_thread_id: data.gmail_thread_id, subject: data.subject, created_at: new Date().toISOString() })
     },
@@ -251,6 +611,7 @@ function ComposeView({ org, project, categoryId, onCancel, onSuccess }) {
   const toggleCc = (id) => setCcPersonIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
   const ccCandidates = org.people.filter(p => p.email && p.id !== Number(toPersonId))
   const removeFile = (idx) => setAttachments(fs => fs.filter((_, i) => i !== idx))
+  const attachmentsTooLarge = totalFileSize(attachments) > MAX_ATTACHMENT_BYTES
 
   return (
     <div>
@@ -298,7 +659,7 @@ function ComposeView({ org, project, categoryId, onCancel, onSuccess }) {
 
           <div className="form-label">
             <span>Body</span>
-            <RichTextEditor onChange={setBody} editorRef={editorRef} placeholder="Write your email..." minHeight={200} />
+            <RichTextEditor onChange={setBody} onBlur={draftSync.handleBlur} editorRef={editorRef} placeholder="Write your email..." minHeight={200} />
           </div>
 
           {attachments.length > 0 && (
@@ -312,23 +673,36 @@ function ComposeView({ org, project, categoryId, onCancel, onSuccess }) {
             </div>
           )}
 
+          {attachmentsTooLarge && (
+            <p className="error-msg">
+              Attachments total {formatBytes(totalFileSize(attachments))} — Gmail's limit is 25MB. Remove a file before sending.
+            </p>
+          )}
+
           {send.isError && <p className="error-msg">{send.error?.response?.data?.detail ?? 'Failed to send'}</p>}
+
+          <DraftStatusLine {...draftSync} />
 
           <div className="form-actions">
             <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
             <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
-              Attach PDF
+              Attach File
               <input
                 type="file"
-                accept=".pdf,application/pdf"
                 multiple
                 style={{ display: 'none' }}
                 onChange={e => setAttachments(fs => [...fs, ...Array.from(e.target.files)])}
               />
             </label>
+            <ScheduleSendControl
+              scheduledFor={draftSync.scheduledFor}
+              status={draftSync.status}
+              onSchedule={draftSync.scheduleSend}
+              onCancelSchedule={draftSync.cancelSchedule}
+            />
             <button
               className="btn btn-primary"
-              disabled={!toPersonId || !subject.trim() || isHtmlEmpty(body) || send.isPending}
+              disabled={!toPersonId || !subject.trim() || isHtmlEmpty(body) || send.isPending || attachmentsTooLarge}
               onClick={() => send.mutate()}
             >
               {send.isPending ? 'Sending...' : 'Send Email'}
@@ -520,6 +894,30 @@ function OrgDetailsCard({ org, categoryId }) {
   )
 }
 
+function PersonCardMenu({ onEdit, onRemove }) {
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setOpen(false) }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div className="person-menu" ref={menuRef}>
+      <button type="button" className="person-menu-btn" aria-label="Contact options" onClick={() => setOpen(v => !v)}>⋮</button>
+      {open && (
+        <div className="person-dropdown">
+          <button type="button" className="person-dropdown-item" onClick={() => { setOpen(false); onEdit() }}>Edit</button>
+          <button type="button" className="person-dropdown-item person-dropdown-danger" onClick={() => { setOpen(false); onRemove() }}>Remove</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function OrgContactsCard({ org, categoryId }) {
   const qc = useQueryClient()
   const [showAdd, setShowAdd] = useState(false)
@@ -589,10 +987,10 @@ function OrgContactsCard({ org, categoryId }) {
                   {person.title && <span className="person-title">{person.title}</span>}
                   {person.email && <a className="person-email" href={`mailto:${person.email}`}>{person.email}</a>}
                 </div>
-                <div className="person-actions">
-                  <button className="btn btn-ghost btn-sm" onClick={() => { setEditingId(person.id); setEditForm({ name: person.name || '', email: person.email || '', title: person.title || '' }) }}>Edit</button>
-                  <button className="btn btn-danger btn-sm" onClick={() => { if (confirm(`Remove ${person.name || person.email}?`)) remove.mutate(person.id) }}>Remove</button>
-                </div>
+                <PersonCardMenu
+                  onEdit={() => { setEditingId(person.id); setEditForm({ name: person.name || '', email: person.email || '', title: person.title || '' }) }}
+                  onRemove={() => { if (confirm(`Remove ${person.name || person.email}?`)) remove.mutate(person.id) }}
+                />
               </div>
             )}
           </div>
@@ -901,7 +1299,8 @@ function ProjectInbox({ project, categories, orgs, onAddCategory }) {
         <div className="inbox-org-list">
           {categories.map(cat => {
             const catOrgs = filtered.filter(o => o.category.id === cat.id)
-            if (catOrgs.length === 0) return null
+            const catHasAnyOrgs = orgs.some(o => o.category.id === cat.id)
+            if (catHasAnyOrgs && catOrgs.length === 0) return null
             const collapsed = collapsedIds.has(cat.id)
             return (
               <div key={cat.id} className="inbox-category-group">

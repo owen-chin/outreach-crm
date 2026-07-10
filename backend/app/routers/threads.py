@@ -1,16 +1,17 @@
 import json
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Form, UploadFile, File
+from urllib.parse import quote
+from fastapi import APIRouter, Depends, HTTPException, Form, UploadFile, File, Response
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.db.database import get_db
-from app.models.models import Organization, Person, Thread, EmailLog, ContactStatus
+from app.models.models import Organization, Person, Thread, EmailLog, EmailDraft
 from app.schemas.schemas import (
     ThreadSummaryOut, ThreadMessagesOut, LinkThreadRequest,
     StartEmailRequest, ReplyRequest, SendEmailResponse, EmailLogOut,
 )
-from app.services.gmail import get_credentials, send_email, reply_email, get_thread, get_or_create_label, apply_label_to_thread
+from app.services.gmail import get_credentials, get_thread, get_attachment_bytes
+from app.services.email_sender import apply_org_label, resolve_reply_recipient, send_and_log_email
 
 router = APIRouter(prefix="/api/organizations/{org_id}/threads", tags=["threads"])
 
@@ -48,18 +49,6 @@ def _resolve_people(person_ids: List[int], org_id: int, db: Session) -> List[Per
     return people
 
 
-def _apply_label(creds, org: Organization, gmail_thread_id: str) -> None:
-    """Applies {project}/{category} label to a Gmail thread. Silently ignores failures."""
-    try:
-        category = org.category
-        project = category.project
-        label_name = f"{project.name}/{category.name}"
-        label_id = get_or_create_label(creds, label_name)
-        apply_label_to_thread(creds, gmail_thread_id, label_id)
-    except Exception:
-        pass
-
-
 @router.get("", response_model=List[ThreadSummaryOut])
 def list_threads(org_id: int, db: Session = Depends(get_db)):
     _get_org_or_404(org_id, db)
@@ -74,6 +63,7 @@ async def start_email(
     subject: str = Form(...),
     body: str = Form(...),
     attachments: List[UploadFile] = File(default=[]),
+    draft_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
 ):
     org = _get_org_or_404(org_id, db)
@@ -94,32 +84,17 @@ async def start_email(
     attachment_data = [(f.filename, await f.read(), f.content_type or "application/octet-stream") for f in attachments]
 
     try:
-        _msg_id, gmail_thread_id = send_email(
-            creds, to_person.email, subject, body, cc=cc_emails, attachments=attachment_data
+        thread = send_and_log_email(
+            db, creds, org, subject=subject, body=body, to_email=to_person.email,
+            cc_emails=cc_emails, attachments=attachment_data, thread=None,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gmail error: {e}")
 
-    _apply_label(creds, org, gmail_thread_id)
+    if draft_id is not None:
+        db.query(EmailDraft).filter(EmailDraft.id == draft_id, EmailDraft.organization_id == org_id).delete()
+        db.commit()
 
-    thread = Thread(organization_id=org_id, gmail_thread_id=gmail_thread_id, subject=subject)
-    db.add(thread)
-    db.flush()
-
-    db.add(EmailLog(
-        thread_id=thread.id,
-        subject=subject,
-        body=body,
-        to_email=to_person.email,
-        cc_emails=",".join(cc_emails) if cc_emails else None,
-    ))
-
-    org.last_contacted_date = datetime.now(timezone.utc)
-    if org.status == ContactStatus.not_contacted:
-        org.status = ContactStatus.contacted
-
-    db.commit()
-    db.refresh(thread)
     return SendEmailResponse(
         thread_id=thread.id,
         gmail_thread_id=thread.gmail_thread_id,
@@ -140,8 +115,47 @@ def link_thread(org_id: int, payload: LinkThreadRequest, db: Session = Depends(g
     db.refresh(thread)
     creds = get_credentials(db)
     if creds and creds.valid:
-        _apply_label(creds, org, payload.gmail_thread_id)
+        apply_org_label(creds, org, payload.gmail_thread_id)
     return thread
+
+
+def _attachment_url(org_id: int, thread_id: int, message_id: str, item: dict) -> str:
+    filename = item.get("filename") or ""
+    mime_type = item.get("mime_type") or "application/octet-stream"
+    return (
+        f"/api/organizations/{org_id}/threads/{thread_id}/messages/{message_id}"
+        f"/attachments/{item['attachment_id']}?filename={quote(filename)}&mime_type={quote(mime_type)}"
+    )
+
+
+def _finalize_thread_messages(org_id: int, thread_id: int, data: dict) -> dict:
+    """Rewrites cid: image references to fetchable URLs and merges inline
+    images + real attachments into the single `attachments` list the schema expects."""
+    for msg in data["messages"]:
+        body_html = msg.get("body_html")
+        combined = []
+        for item in msg.pop("inline_images", []):
+            url = _attachment_url(org_id, thread_id, msg["id"], item)
+            if body_html and item.get("content_id"):
+                body_html = body_html.replace(f"cid:{item['content_id']}", url)
+            combined.append({
+                "attachment_id": item["attachment_id"],
+                "filename": item.get("filename"),
+                "mime_type": item["mime_type"],
+                "size": item.get("size", 0),
+                "inline": True,
+            })
+        for item in msg.get("attachments", []):
+            combined.append({
+                "attachment_id": item["attachment_id"],
+                "filename": item.get("filename"),
+                "mime_type": item["mime_type"],
+                "size": item.get("size", 0),
+                "inline": False,
+            })
+        msg["body_html"] = body_html
+        msg["attachments"] = combined
+    return data
 
 
 @router.get("/{thread_id}/messages", response_model=ThreadMessagesOut)
@@ -152,7 +166,29 @@ def get_thread_messages(org_id: int, thread_id: int, db: Session = Depends(get_d
         data = get_thread(creds, thread.gmail_thread_id)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gmail error: {e}")
-    return data
+    return _finalize_thread_messages(org_id, thread_id, data)
+
+
+@router.get("/{thread_id}/messages/{message_id}/attachments/{attachment_id}")
+def get_message_attachment(
+    org_id: int,
+    thread_id: int,
+    message_id: str,
+    attachment_id: str,
+    filename: Optional[str] = None,
+    mime_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    _get_thread_or_404(org_id, thread_id, db)
+    creds = _get_creds_or_403(db)
+    try:
+        data = get_attachment_bytes(creds, message_id, attachment_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Gmail error: {e}")
+    headers = {}
+    if filename:
+        headers["Content-Disposition"] = f'inline; filename="{filename}"'
+    return Response(content=data, media_type=mime_type or "application/octet-stream", headers=headers)
 
 
 @router.get("/{thread_id}/logs", response_model=List[EmailLogOut])
@@ -168,6 +204,7 @@ async def reply_to_thread(
     cc_person_ids: str = Form("[]"),
     body: str = Form(...),
     attachments: List[UploadFile] = File(default=[]),
+    draft_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
 ):
     org = _get_org_or_404(org_id, db)
@@ -178,15 +215,9 @@ async def reply_to_thread(
     cc_people = _resolve_people(cc_ids, org_id, db)
     cc_emails = [p.email for p in cc_people if p.email]
 
-    first_log = db.query(EmailLog).filter(EmailLog.thread_id == thread.id).order_by(EmailLog.sent_at).first()
-    to_email = first_log.to_email if first_log else None
+    to_email = resolve_reply_recipient(db, thread, org_id)
     if not to_email:
-        first_person = db.query(Person).filter(
-            Person.organization_id == org_id, Person.email.isnot(None)
-        ).first()
-        if not first_person:
-            raise HTTPException(status_code=400, detail="No email address found for this organization")
-        to_email = first_person.email
+        raise HTTPException(status_code=400, detail="No email address found for this organization")
 
     subject = thread.subject or "Re: (no subject)"
     reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
@@ -194,24 +225,16 @@ async def reply_to_thread(
     attachment_data = [(f.filename, await f.read(), f.content_type or "application/octet-stream") for f in attachments]
 
     try:
-        _msg_id, _thread_id = reply_email(
-            creds, thread.gmail_thread_id, to_email, reply_subject, body, cc=cc_emails, attachments=attachment_data
+        thread = send_and_log_email(
+            db, creds, org, subject=reply_subject, body=body, to_email=to_email,
+            cc_emails=cc_emails, attachments=attachment_data, thread=thread,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gmail error: {e}")
 
-    _apply_label(creds, org, thread.gmail_thread_id)
-
-    db.add(EmailLog(
-        thread_id=thread.id,
-        subject=reply_subject,
-        body=body,
-        to_email=to_email,
-        cc_emails=",".join(cc_emails) if cc_emails else None,
-    ))
-
-    org.last_contacted_date = datetime.now(timezone.utc)
-    db.commit()
+    if draft_id is not None:
+        db.query(EmailDraft).filter(EmailDraft.id == draft_id, EmailDraft.thread_id == thread_id).delete()
+        db.commit()
 
     return SendEmailResponse(
         thread_id=thread.id,

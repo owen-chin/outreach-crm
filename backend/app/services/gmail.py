@@ -103,21 +103,91 @@ def reply_email(creds: Credentials, thread_id: str, to: str, subject: str, body:
 
 
 
+def _decode_body_data(data: str) -> str:
+    """Decodes Gmail API's urlsafe-base64, unpadded body data into text."""
+    padded = data + "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(padded).decode("utf-8", errors="replace")
+
+
+def _walk_message_parts(part: dict, html_parts: list, text_parts: list, inline_items: list, attachment_items: list) -> None:
+    """Recursively walks a Gmail message payload's MIME parts, collecting the
+    text/html and text/plain bodies plus inline images and real attachments."""
+    sub_parts = part.get("parts")
+    if sub_parts:
+        for sp in sub_parts:
+            _walk_message_parts(sp, html_parts, text_parts, inline_items, attachment_items)
+        return
+
+    mime_type = part.get("mimeType", "")
+    filename = part.get("filename") or ""
+    body = part.get("body") or {}
+    data = body.get("data")
+    attachment_id = body.get("attachmentId")
+    headers = {h["name"].lower(): h["value"] for h in part.get("headers", [])}
+    content_id = (headers.get("content-id") or "").strip("<>")
+    disposition = (headers.get("content-disposition") or "").lower()
+
+    if attachment_id:
+        is_inline = bool(content_id) or "inline" in disposition
+        item = {
+            "attachment_id": attachment_id,
+            "filename": filename or None,
+            "content_id": content_id or None,
+            "mime_type": mime_type or "application/octet-stream",
+            "size": body.get("size", 0),
+        }
+        (inline_items if is_inline else attachment_items).append(item)
+    elif mime_type == "text/html" and data:
+        html_parts.append(_decode_body_data(data))
+    elif mime_type == "text/plain" and data:
+        text_parts.append(_decode_body_data(data))
+
+
+def _best_body_html(html_parts: list[str], text_parts: list[str]) -> str | None:
+    if html_parts:
+        return "".join(html_parts)
+    if text_parts:
+        import html as html_mod
+        escaped = html_mod.escape("\n\n".join(text_parts))
+        return f'<pre style="white-space:pre-wrap;font-family:inherit;margin:0">{escaped}</pre>'
+    return None
+
+
 def get_thread(creds: Credentials, thread_id: str) -> dict:
-    """Fetches thread metadata and snippets for display."""
+    """Fetches a thread's messages, including rendered body HTML and any
+    inline images / attachments found in the MIME structure."""
     service = build("gmail", "v1", credentials=creds)
-    thread = service.users().threads().get(userId="me", id=thread_id, format="metadata").execute()
+    thread = service.users().threads().get(userId="me", id=thread_id, format="full").execute()
     messages = []
     for msg in thread.get("messages", []):
         headers = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
+        html_parts: list[str] = []
+        text_parts: list[str] = []
+        inline_items: list[dict] = []
+        attachment_items: list[dict] = []
+        _walk_message_parts(msg["payload"], html_parts, text_parts, inline_items, attachment_items)
         messages.append({
             "id": msg["id"],
             "sender": headers.get("From", ""),
             "subject": headers.get("Subject", ""),
             "date": headers.get("Date", ""),
             "snippet": msg.get("snippet", ""),
+            "body_html": _best_body_html(html_parts, text_parts),
+            "inline_images": inline_items,
+            "attachments": attachment_items,
         })
     return {"thread_id": thread_id, "messages": messages}
+
+
+def get_attachment_bytes(creds: Credentials, message_id: str, attachment_id: str) -> bytes:
+    """Fetches and decodes a single attachment/inline-image's raw bytes."""
+    service = build("gmail", "v1", credentials=creds)
+    result = service.users().messages().attachments().get(
+        userId="me", messageId=message_id, id=attachment_id
+    ).execute()
+    data = result.get("data", "")
+    padded = data + "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(padded)
 
 
 def get_or_create_label(creds: Credentials, name: str) -> str:
