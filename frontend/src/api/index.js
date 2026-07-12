@@ -8,6 +8,8 @@ api.interceptors.request.use(config => {
   return config
 })
 
+export default api
+
 // Projects
 export const getProjects = () => api.get('/api/projects').then(r => r.data)
 export const getProject = (id) => api.get(`/api/projects/${id}`).then(r => r.data)
