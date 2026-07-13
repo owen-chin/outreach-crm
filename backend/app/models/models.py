@@ -1,7 +1,7 @@
 import enum
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Date, Enum, ForeignKey, JSON,
-    Index, LargeBinary, text
+    Index, LargeBinary, UniqueConstraint, text
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -120,6 +120,7 @@ class EmailTemplate(Base):
     __tablename__ = "email_templates"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name = Column(String, nullable=False)
     subject = Column(String, nullable=False)
     body = Column(Text, nullable=False)
@@ -129,9 +130,11 @@ class EmailTemplate(Base):
 
 class OAuthToken(Base):
     __tablename__ = "oauth_tokens"
+    __table_args__ = (UniqueConstraint("service", "user_id", name="ux_oauth_tokens_service_user"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    service = Column(String, nullable=False, unique=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    service = Column(String, nullable=False)
     token_data = Column(JSON, nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

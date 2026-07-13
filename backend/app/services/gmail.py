@@ -22,8 +22,10 @@ SCOPES = [
 ]
 
 
-def get_credentials(db: Session) -> Credentials | None:
-    row = db.query(OAuthToken).filter(OAuthToken.service == "gmail").first()
+def get_credentials(db: Session, user_id: int) -> Credentials | None:
+    row = db.query(OAuthToken).filter(
+        OAuthToken.service == "gmail", OAuthToken.user_id == user_id
+    ).first()
     if not row:
         return None
 
@@ -44,18 +46,20 @@ def get_credentials(db: Session) -> Credentials | None:
     return creds
 
 
-def save_credentials(db: Session, creds: Credentials) -> None:
+def save_credentials(db: Session, user_id: int, creds: Credentials) -> None:
     token_data = {
         "token": creds.token,
         "refresh_token": creds.refresh_token,
         "token_uri": creds.token_uri,
         "scopes": list(creds.scopes) if creds.scopes else SCOPES,
     }
-    row = db.query(OAuthToken).filter(OAuthToken.service == "gmail").first()
+    row = db.query(OAuthToken).filter(
+        OAuthToken.service == "gmail", OAuthToken.user_id == user_id
+    ).first()
     if row:
         row.token_data = token_data
     else:
-        db.add(OAuthToken(service="gmail", token_data=token_data))
+        db.add(OAuthToken(service="gmail", user_id=user_id, token_data=token_data))
     db.commit()
 
 

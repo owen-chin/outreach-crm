@@ -180,6 +180,23 @@ Organization. Gmail labels are applied automatically on send/reply/link, formatt
 - **Auth is Google OAuth only** — there's no username/password login flow for the app
   itself (despite `OFFICER_PASSWORD` existing in config, it isn't used by any route
   currently).
+- **Every resource is scoped to the logged-in Google user.** Every router (except the
+  cron-only `/internal` route, which uses a shared secret instead) requires
+  `current_user: User = Depends(get_current_user)`, and nested resources
+  (categories/organizations/people/threads/drafts) are fetched through
+  `app/services/ownership.py` helpers that join back up to `Project.user_id` — so a
+  request for someone else's org/category/project 404s instead of leaking data. If
+  you add a new router or nested resource, follow this pattern: don't `db.get(...)`
+  or filter by parent ID alone, go through (or add to) `ownership.py`.
+- **Gmail credentials are per-user**, stored in `oauth_tokens` keyed by
+  `(service, user_id)`. `get_credentials(db, user_id)` / `save_credentials(db,
+  user_id, creds)` in `app/services/gmail.py` always take a `user_id` — never call
+  them without one, or you'll be back to the old bug where one user's login could
+  silently overwrite the Gmail account the whole app sends through.
+- **Scheduled sends run outside a request context** (triggered by the GitHub Actions
+  cron, no logged-in user), so `services/scheduler.py` resolves the owning user_id
+  per-draft via `get_owning_user_id()` (walks organization → category → project)
+  before fetching credentials — don't reintroduce a single global lookup there.
 - **Use the shared Axios client** (`frontend/src/api/index.js`, exported as default)
   for all API calls rather than raw `axios`/`fetch` — a previous bug shipped because
   `AuthContext.jsx` had its own hardcoded `axios.get('http://localhost:8000/...')`

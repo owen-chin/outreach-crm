@@ -5,29 +5,24 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.db.database import get_db
-from app.models.models import Organization, Person, Thread, EmailLog, EmailDraft
+from app.models.models import Organization, Person, Thread, EmailLog, EmailDraft, User
 from app.schemas.schemas import (
     ThreadSummaryOut, ThreadMessagesOut, LinkThreadRequest,
     StartEmailRequest, ReplyRequest, SendEmailResponse, EmailLogOut,
 )
+from app.services.auth_utils import get_current_user
+from app.services.ownership import get_owned_org
 from app.services.gmail import get_credentials, get_thread, get_attachment_bytes
 from app.services.email_sender import apply_org_label, resolve_reply_recipient, send_and_log_email
 
 router = APIRouter(prefix="/api/organizations/{org_id}/threads", tags=["threads"])
 
 
-def _get_creds_or_403(db: Session):
-    creds = get_credentials(db)
+def _get_creds_or_403(db: Session, user_id: int):
+    creds = get_credentials(db, user_id)
     if not creds or not creds.valid:
         raise HTTPException(status_code=403, detail="Gmail not connected — log in with Google")
     return creds
-
-
-def _get_org_or_404(org_id: int, db: Session) -> Organization:
-    org = db.get(Organization, org_id)
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
-    return org
 
 
 def _get_thread_or_404(org_id: int, thread_id: int, db: Session) -> Thread:
@@ -50,8 +45,8 @@ def _resolve_people(person_ids: List[int], org_id: int, db: Session) -> List[Per
 
 
 @router.get("", response_model=List[ThreadSummaryOut])
-def list_threads(org_id: int, db: Session = Depends(get_db)):
-    _get_org_or_404(org_id, db)
+def list_threads(org_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    get_owned_org(db, org_id, current_user)
     return db.query(Thread).filter(Thread.organization_id == org_id).all()
 
 
@@ -65,9 +60,10 @@ async def start_email(
     attachments: List[UploadFile] = File(default=[]),
     draft_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    org = _get_org_or_404(org_id, db)
-    creds = _get_creds_or_403(db)
+    org = get_owned_org(db, org_id, current_user)
+    creds = _get_creds_or_403(db, current_user.id)
 
     to_person = db.query(Person).filter(
         Person.id == to_person_id, Person.organization_id == org_id
@@ -103,8 +99,8 @@ async def start_email(
 
 
 @router.post("/link", response_model=ThreadSummaryOut, status_code=201)
-def link_thread(org_id: int, payload: LinkThreadRequest, db: Session = Depends(get_db)):
-    org = _get_org_or_404(org_id, db)
+def link_thread(org_id: int, payload: LinkThreadRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    org = get_owned_org(db, org_id, current_user)
     thread = Thread(
         organization_id=org_id,
         gmail_thread_id=payload.gmail_thread_id,
@@ -113,7 +109,7 @@ def link_thread(org_id: int, payload: LinkThreadRequest, db: Session = Depends(g
     db.add(thread)
     db.commit()
     db.refresh(thread)
-    creds = get_credentials(db)
+    creds = get_credentials(db, current_user.id)
     if creds and creds.valid:
         apply_org_label(creds, org, payload.gmail_thread_id)
     return thread
@@ -159,9 +155,10 @@ def _finalize_thread_messages(org_id: int, thread_id: int, data: dict) -> dict:
 
 
 @router.get("/{thread_id}/messages", response_model=ThreadMessagesOut)
-def get_thread_messages(org_id: int, thread_id: int, db: Session = Depends(get_db)):
+def get_thread_messages(org_id: int, thread_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    get_owned_org(db, org_id, current_user)
     thread = _get_thread_or_404(org_id, thread_id, db)
-    creds = _get_creds_or_403(db)
+    creds = _get_creds_or_403(db, current_user.id)
     try:
         data = get_thread(creds, thread.gmail_thread_id)
     except Exception as e:
@@ -178,9 +175,11 @@ def get_message_attachment(
     filename: Optional[str] = None,
     mime_type: Optional[str] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    get_owned_org(db, org_id, current_user)
     _get_thread_or_404(org_id, thread_id, db)
-    creds = _get_creds_or_403(db)
+    creds = _get_creds_or_403(db, current_user.id)
     try:
         data = get_attachment_bytes(creds, message_id, attachment_id)
     except Exception as e:
@@ -192,7 +191,8 @@ def get_message_attachment(
 
 
 @router.get("/{thread_id}/logs", response_model=List[EmailLogOut])
-def get_thread_logs(org_id: int, thread_id: int, db: Session = Depends(get_db)):
+def get_thread_logs(org_id: int, thread_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    get_owned_org(db, org_id, current_user)
     thread = _get_thread_or_404(org_id, thread_id, db)
     return db.query(EmailLog).filter(EmailLog.thread_id == thread.id).all()
 
@@ -206,10 +206,11 @@ async def reply_to_thread(
     attachments: List[UploadFile] = File(default=[]),
     draft_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    org = _get_org_or_404(org_id, db)
+    org = get_owned_org(db, org_id, current_user)
     thread = _get_thread_or_404(org_id, thread_id, db)
-    creds = _get_creds_or_403(db)
+    creds = _get_creds_or_403(db, current_user.id)
 
     cc_ids = json.loads(cc_person_ids)
     cc_people = _resolve_people(cc_ids, org_id, db)

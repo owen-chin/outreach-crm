@@ -3,8 +3,10 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.db.database import get_db
-from app.models.models import Organization, Category, Person
+from app.models.models import Organization, Person, User
 from app.schemas.schemas import OrgCreate, OrgUpdate, OrgOut
+from app.services.auth_utils import get_current_user
+from app.services.ownership import get_owned_category
 
 router = APIRouter(prefix="/api/categories/{category_id}/organizations", tags=["organizations"])
 
@@ -19,14 +21,14 @@ def _get_org_or_404(category_id: int, org_id: int, db: Session) -> Organization:
 
 
 @router.get("", response_model=List[OrgOut])
-def list_orgs(category_id: int, db: Session = Depends(get_db)):
+def list_orgs(category_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    get_owned_category(db, category_id, current_user)
     return db.query(Organization).filter(Organization.category_id == category_id).all()
 
 
 @router.post("", response_model=OrgOut, status_code=201)
-def create_org(category_id: int, payload: OrgCreate, db: Session = Depends(get_db)):
-    if not db.get(Category, category_id):
-        raise HTTPException(status_code=404, detail="Category not found")
+def create_org(category_id: int, payload: OrgCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    get_owned_category(db, category_id, current_user)
 
     data = payload.model_dump(exclude={"contact_name", "contact_email"})
     org = Organization(category_id=category_id, **data)
@@ -47,12 +49,14 @@ def create_org(category_id: int, payload: OrgCreate, db: Session = Depends(get_d
 
 
 @router.get("/{org_id}", response_model=OrgOut)
-def get_org(category_id: int, org_id: int, db: Session = Depends(get_db)):
+def get_org(category_id: int, org_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    get_owned_category(db, category_id, current_user)
     return _get_org_or_404(category_id, org_id, db)
 
 
 @router.patch("/{org_id}", response_model=OrgOut)
-def update_org(category_id: int, org_id: int, payload: OrgUpdate, db: Session = Depends(get_db)):
+def update_org(category_id: int, org_id: int, payload: OrgUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    get_owned_category(db, category_id, current_user)
     org = _get_org_or_404(category_id, org_id, db)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(org, field, value)
@@ -62,7 +66,8 @@ def update_org(category_id: int, org_id: int, payload: OrgUpdate, db: Session = 
 
 
 @router.delete("/{org_id}", status_code=204)
-def delete_org(category_id: int, org_id: int, db: Session = Depends(get_db)):
+def delete_org(category_id: int, org_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    get_owned_category(db, category_id, current_user)
     org = _get_org_or_404(category_id, org_id, db)
     db.delete(org)
     db.commit()

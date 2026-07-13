@@ -51,10 +51,10 @@ def _html_to_text(html: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def _thread_transcript(db: Session, thread: Thread) -> str | None:
+def _thread_transcript(db: Session, thread: Thread, user_id: int) -> str | None:
     """Fetches every message in the Gmail thread and renders a plain-text transcript,
     so the model can read the full back-and-forth rather than just the latest message."""
-    creds = get_credentials(db)
+    creds = get_credentials(db, user_id)
     if not (creds and creds.valid):
         return None
     try:
@@ -74,7 +74,7 @@ def _thread_transcript(db: Session, thread: Thread) -> str | None:
 
 def generate_chat_reply(
     db: Session, org: Organization, *,
-    to_person: Person | None, thread: Thread | None, messages: list[dict],
+    to_person: Person | None, thread: Thread | None, messages: list[dict], user_id: int,
 ) -> dict:
     context_lines = [
         f"Organization: {org.name}",
@@ -91,7 +91,7 @@ def generate_chat_reply(
 
     if thread:
         context_lines.append(f"This is a REPLY inside an existing thread titled '{thread.subject}'.")
-        transcript = _thread_transcript(db, thread)
+        transcript = _thread_transcript(db, thread, user_id)
         if transcript:
             context_lines.append(f"Full thread so far, oldest first:\n{transcript}")
         context_lines.append("Help the user draft a reply that responds appropriately to the whole thread.")

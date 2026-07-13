@@ -74,7 +74,7 @@ def google_auth_callback(code: str, db: Session = Depends(get_db)):
         db.add(user)
 
     db.flush()
-    save_credentials(db, creds)
+    save_credentials(db, user.id, creds)
     db.commit()
     db.refresh(user)
 
@@ -88,8 +88,8 @@ def get_me(current_user: User = Depends(get_current_user)):
 
 
 @router.get("/status")
-def auth_status(db: Session = Depends(get_db)):
-    creds = get_credentials(db)
+def auth_status(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    creds = get_credentials(db, current_user.id)
     return {"connected": creds is not None and creds.valid}
 
 

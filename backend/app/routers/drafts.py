@@ -5,18 +5,13 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.db.database import get_db
-from app.models.models import Organization, Person, Thread, EmailDraft, EmailDraftAttachment, DraftStatus
+from app.models.models import Organization, Person, Thread, EmailDraft, EmailDraftAttachment, DraftStatus, User
 from app.schemas.schemas import DraftOut, DraftAttachmentOut, AIDraftChatRequest, AIDraftChatResponse
+from app.services.auth_utils import get_current_user
+from app.services.ownership import get_owned_org
 from app.services.ai_draft import generate_chat_reply, AIDraftQuotaExceeded
 
 router = APIRouter(prefix="/api/organizations/{org_id}/drafts", tags=["drafts"])
-
-
-def _get_org_or_404(org_id: int, db: Session) -> Organization:
-    org = db.get(Organization, org_id)
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
-    return org
 
 
 def _find_draft(db: Session, org_id: int, thread_id: Optional[int]):
@@ -44,8 +39,8 @@ def _to_draft_out(draft: EmailDraft) -> DraftOut:
 
 
 @router.get("", response_model=Optional[DraftOut])
-def get_draft(org_id: int, thread_id: Optional[int] = None, db: Session = Depends(get_db)):
-    _get_org_or_404(org_id, db)
+def get_draft(org_id: int, thread_id: Optional[int] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    get_owned_org(db, org_id, current_user)
     draft = _find_draft(db, org_id, thread_id)
     return _to_draft_out(draft) if draft else None
 
@@ -61,8 +56,9 @@ async def upsert_draft(
     send_at: Optional[str] = Form(None),
     attachments: List[UploadFile] = File(default=[]),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    _get_org_or_404(org_id, db)
+    get_owned_org(db, org_id, current_user)
 
     if thread_id is not None:
         thread = db.query(Thread).filter(Thread.id == thread_id, Thread.organization_id == org_id).first()
@@ -123,8 +119,8 @@ async def upsert_draft(
 
 
 @router.post("/ai-draft", response_model=AIDraftChatResponse)
-def ai_draft(org_id: int, payload: AIDraftChatRequest, db: Session = Depends(get_db)):
-    org = _get_org_or_404(org_id, db)
+def ai_draft(org_id: int, payload: AIDraftChatRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    org = get_owned_org(db, org_id, current_user)
 
     if not payload.messages:
         raise HTTPException(status_code=422, detail="messages must not be empty")
@@ -147,6 +143,7 @@ def ai_draft(org_id: int, payload: AIDraftChatRequest, db: Session = Depends(get
         result = generate_chat_reply(
             db, org, to_person=to_person, thread=thread,
             messages=[m.model_dump() for m in payload.messages],
+            user_id=current_user.id,
         )
     except AIDraftQuotaExceeded as e:
         raise HTTPException(status_code=429, detail=str(e))
@@ -157,7 +154,8 @@ def ai_draft(org_id: int, payload: AIDraftChatRequest, db: Session = Depends(get
 
 
 @router.delete("/{draft_id}", status_code=204)
-def delete_draft(org_id: int, draft_id: int, db: Session = Depends(get_db)):
+def delete_draft(org_id: int, draft_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    get_owned_org(db, org_id, current_user)
     draft = db.query(EmailDraft).filter(EmailDraft.id == draft_id, EmailDraft.organization_id == org_id).first()
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
@@ -166,7 +164,8 @@ def delete_draft(org_id: int, draft_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{draft_id}/attachments/{attachment_id}")
-def get_draft_attachment(org_id: int, draft_id: int, attachment_id: int, db: Session = Depends(get_db)):
+def get_draft_attachment(org_id: int, draft_id: int, attachment_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    get_owned_org(db, org_id, current_user)
     att = db.query(EmailDraftAttachment).join(EmailDraft).filter(
         EmailDraftAttachment.id == attachment_id,
         EmailDraftAttachment.draft_id == draft_id,

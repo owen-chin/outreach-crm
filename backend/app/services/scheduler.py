@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models.models import EmailDraft, DraftStatus, Organization, Thread, Person
 from app.services.gmail import get_credentials
+from app.services.ownership import get_owning_user_id
 from app.services.email_sender import send_and_log_email, resolve_reply_recipient
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,8 @@ def _send_one_draft(db: Session, draft_id: int) -> dict:
         if not org:
             raise RuntimeError("Organization was deleted")
 
-        creds = get_credentials(db)
+        owning_user_id = get_owning_user_id(db, organization_id=draft.organization_id)
+        creds = get_credentials(db, owning_user_id) if owning_user_id else None
         if not creds or not creds.valid:
             raise RuntimeError("Gmail not connected — reconnect Google to send this email")
 
