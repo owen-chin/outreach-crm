@@ -25,8 +25,8 @@ export default function Topbar() {
   return (
     <header className="topbar">
       <div className="topbar-brand">
-        <span className="topbar-brand-mark">O</span>
-        <span className="topbar-brand-name">Outreach CRM</span>
+        <span className="topbar-brand-mark">L</span>
+        <span className="topbar-brand-name">Longlist</span>
       </div>
 
       <nav className="topbar-nav">

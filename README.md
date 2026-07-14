@@ -1,4 +1,4 @@
-# Outreach CRM
+# Longlist
 
 A lightweight CRM for managing sponsorship/outreach campaigns: organize target
 organizations by project and category, track contacts, send and reply to emails

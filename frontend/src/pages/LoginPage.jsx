@@ -9,7 +9,7 @@ export default function LoginPage() {
   return (
     <div className="login-page">
       <div className="login-card">
-        <h1 className="login-title">Outreach CRM</h1>
+        <h1 className="login-title">Longlist</h1>
         <p className="login-subtitle">Manage your outreach contacts and send emails — all in one place.</p>
         <button className="btn btn-google" onClick={handleLogin}>
           <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
