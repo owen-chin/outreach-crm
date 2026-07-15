@@ -1,8 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getAuthStatus, getGoogleAuthUrl, disconnectGoogle } from '../api'
+import { useTheme } from '../context/ThemeContext'
 
 export default function SettingsPage() {
   const qc = useQueryClient()
+  const { theme, toggleTheme } = useTheme()
 
   const { data: status, isLoading } = useQuery({ queryKey: ['auth-status'], queryFn: getAuthStatus })
 
@@ -44,6 +46,25 @@ export default function SettingsPage() {
               Connect Gmail
             </button>
           )}
+        </div>
+      </div>
+
+      <div className="settings-card">
+        <div className="settings-row">
+          <div>
+            <h3>Dark mode</h3>
+            <p className="muted">Switch between a light and dark interface.</p>
+          </div>
+          <button
+            type="button"
+            className={`theme-switch ${theme === 'dark' ? 'is-on' : ''}`}
+            role="switch"
+            aria-checked={theme === 'dark'}
+            aria-label="Toggle dark mode"
+            onClick={toggleTheme}
+          >
+            <span className="theme-switch-thumb" />
+          </button>
         </div>
       </div>
     </div>

@@ -31,6 +31,43 @@ function timeAgo(iso) {
 const ATTENTION_LABEL = { new_reply: 'NEW REPLY', follow_up: 'FOLLOW UP', deadline: 'DEADLINE' }
 const ATTENTION_ICON = { new_reply: '✉', follow_up: '↩', deadline: '⏰' }
 
+const STATUS_ORDER = ['not_contacted', 'contacted', 'responded', 'negotiating', 'confirmed', 'declined']
+const STATUS_LABEL = {
+  not_contacted: 'Not contacted',
+  contacted: 'Contacted',
+  responded: 'Responded',
+  negotiating: 'Negotiating',
+  confirmed: 'Confirmed',
+  declined: 'Declined',
+}
+
+function pipelineBreakdown(counts) {
+  return STATUS_ORDER
+    .filter(s => s !== 'not_contacted' && counts[s] > 0)
+    .map(s => ({ status: s, count: counts[s] }))
+}
+
+function pipelineAriaLabel(counts, total) {
+  const parts = STATUS_ORDER.filter(s => counts[s] > 0).map(s => `${counts[s]} ${STATUS_LABEL[s].toLowerCase()}`)
+  return `${parts.join(', ')} of ${total} organizations`
+}
+
+function PipelineBar({ counts, total }) {
+  if (!total) return <div className="pipeline-bar pipeline-bar-empty" />
+  return (
+    <div className="pipeline-bar" role="img" aria-label={pipelineAriaLabel(counts, total)}>
+      {STATUS_ORDER.filter(s => counts[s] > 0).map(s => (
+        <div
+          key={s}
+          className={`pipeline-seg pipeline-seg-${s}`}
+          style={{ flexGrow: counts[s] }}
+          title={`${STATUS_LABEL[s]}: ${counts[s]}`}
+        />
+      ))}
+    </div>
+  )
+}
+
 function errorDetail(mutation) {
   const detail = mutation.error?.response?.data?.detail
   return typeof detail === 'string' ? detail : 'Something went wrong'
@@ -64,6 +101,28 @@ export default function HomePage() {
   const orgsTotal = projects.reduce((sum, p) => sum + p.org_count, 0)
   const confirmedTotal = projects.reduce((sum, p) => sum + p.confirmed_count, 0)
 
+  const attentionCountByProject = attention.reduce((acc, item) => {
+    acc[item.project_id] = (acc[item.project_id] || 0) + 1
+    return acc
+  }, {})
+
+  const tagged = projects.map(p => ({ ...p, tag: projectStatusTag(p) }))
+  const activeProjects = tagged
+    .filter(p => p.tag.tone === 'active')
+    .sort((a, b) =>
+      (attentionCountByProject[b.id] || 0) - (attentionCountByProject[a.id] || 0)
+      || new Date(b.updated_at) - new Date(a.updated_at)
+    )
+  const otherProjects = tagged
+    .filter(p => p.tag.tone !== 'active')
+    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+
+  const confirmDelete = (project) => {
+    if (confirm(`Delete "${project.name}"? This removes all its categories, organizations, and threads.`)) {
+      remove.mutate(project.id)
+    }
+  }
+
   return (
     <div className="home-layout">
       <div className="home-main">
@@ -82,56 +141,82 @@ export default function HomePage() {
           <p className="empty">No projects yet. Create one to get started.</p>
         )}
 
-        <div className="home-project-grid">
-          {projects.map(p => {
-            const tag = projectStatusTag(p)
-            const pct = Math.round((p.outreach_pct ?? 0) * 100)
-            return (
-              <div key={p.id} className="home-project-card" onClick={() => navigate(`/projects/${p.id}`)}>
-                <div className="home-project-card-top">
-                  <div>
-                    <h3 className="home-project-name">{p.name}</h3>
-                    {p.date && <span className="home-project-date">{p.date}</span>}
+        {activeProjects.length > 0 && (
+          <div className="project-row-list">
+            {activeProjects.map(p => {
+              const flagCount = attentionCountByProject[p.id] || 0
+              const breakdown = pipelineBreakdown(p.status_counts)
+              return (
+                <div key={p.id} className="project-row" onClick={() => navigate(`/projects/${p.id}`)}>
+                  <div className="project-row-main">
+                    <div className="project-row-heading">
+                      <h3 className="project-row-name">{p.name}</h3>
+                      <span className={`status-tag status-tag-${p.tag.tone}`}>{p.tag.label}</span>
+                      {flagCount > 0 && (
+                        <span className="project-row-flag">{flagCount} need{flagCount !== 1 ? 's' : ''} attention</span>
+                      )}
+                    </div>
+                    <div className="project-row-meta">
+                      {p.date && <span>{p.date}</span>}
+                      <span>{p.category_count} categor{p.category_count !== 1 ? 'ies' : 'y'}</span>
+                      <span>Updated {timeAgo(p.updated_at)}</span>
+                    </div>
+                    {p.description && <p className="project-row-desc">{p.description}</p>}
                   </div>
-                  <div className="home-project-card-top-right">
-                    <span className={`status-tag status-tag-${tag.tone}`}>{tag.label}</span>
-                    <button
-                      className="home-project-delete"
-                      title="Delete project"
-                      onClick={e => { e.stopPropagation(); if (confirm(`Delete "${p.name}"? This removes all its categories, organizations, and threads.`)) remove.mutate(p.id) }}
-                    >
-                      ×
-                    </button>
+
+                  <div className="project-row-pipeline">
+                    <span className="pipeline-total">{p.org_count} organization{p.org_count !== 1 ? 's' : ''}</span>
+                    <PipelineBar counts={p.status_counts} total={p.org_count} />
+                    <div className="pipeline-tags">
+                      {breakdown.length > 0
+                        ? breakdown.map(({ status, count }) => (
+                          <span key={status} className="ptag">
+                            <span className={`ptag-dot ptag-dot-${status}`} />
+                            {count} {STATUS_LABEL[status].toLowerCase()}
+                          </span>
+                        ))
+                        : p.org_count > 0 && <span className="ptag muted">Not started yet</span>}
+                    </div>
                   </div>
+
+                  <button
+                    className="project-row-delete"
+                    title="Delete project"
+                    onClick={e => { e.stopPropagation(); confirmDelete(p) }}
+                  >
+                    ×
+                  </button>
                 </div>
-                <p className="home-project-desc">{p.description || ''}</p>
-                <div className="home-project-stats">
-                  <div className="home-project-stat">
-                    <span className="home-project-stat-value">{p.org_count}</span>
-                    <span className="home-project-stat-label">Orgs</span>
-                  </div>
-                  <div className="home-project-stat">
-                    <span className="home-project-stat-value home-project-stat-confirmed">{p.confirmed_count}</span>
-                    <span className="home-project-stat-label">Confirmed</span>
-                  </div>
-                  <div className="home-project-stat">
-                    <span className="home-project-stat-value">{p.negotiating_count}</span>
-                    <span className="home-project-stat-label">In talks</span>
-                  </div>
+              )
+            })}
+          </div>
+        )}
+
+        {otherProjects.length > 0 && (
+          <div className="home-compact-section">
+            <h2 className="home-compact-heading">Planning &amp; wrapped</h2>
+            <div className="project-compact-list">
+              {otherProjects.map(p => (
+                <div key={p.id} className="project-compact-row" onClick={() => navigate(`/projects/${p.id}`)}>
+                  <span className={`status-tag status-tag-${p.tag.tone} status-tag-sm`}>{p.tag.label}</span>
+                  <span className="project-compact-name">{p.name}</span>
+                  {p.date && <span className="project-compact-date">{p.date}</span>}
+                  <span className="project-compact-count muted">
+                    {p.org_count} org{p.org_count !== 1 ? 's' : ''}
+                    {p.confirmed_count > 0 ? ` · ${p.confirmed_count} confirmed` : ''}
+                  </span>
+                  <button
+                    className="project-compact-delete"
+                    title="Delete project"
+                    onClick={e => { e.stopPropagation(); confirmDelete(p) }}
+                  >
+                    ×
+                  </button>
                 </div>
-                <div className="home-project-progress">
-                  <div className="progress-track">
-                    <div className="progress-fill" style={{ width: `${pct}%` }} />
-                  </div>
-                  <div className="home-project-progress-labels">
-                    <span className="muted">Updated {timeAgo(p.updated_at)}</span>
-                    <span>{pct}% outreach</span>
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <aside className="home-rail">

@@ -36,6 +36,7 @@ def get_dashboard(db: Session = Depends(get_db), current_user: User = Depends(ge
         confirmed_count = sum(1 for o in orgs if o.status == ContactStatus.confirmed)
         negotiating_count = sum(1 for o in orgs if o.status == ContactStatus.negotiating)
         outreach_count = sum(1 for o in orgs if o.status != ContactStatus.not_contacted)
+        status_counts = {status.value: sum(1 for o in orgs if o.status == status) for status in ContactStatus}
 
         latest_activity = max([o.updated_at for o in orgs] + [project.created_at])
 
@@ -50,6 +51,7 @@ def get_dashboard(db: Session = Depends(get_db), current_user: User = Depends(ge
             category_count=len(project.categories),
             outreach_pct=(outreach_count / org_count) if org_count else 0.0,
             updated_at=latest_activity,
+            status_counts=status_counts,
         ))
 
         for org in orgs:

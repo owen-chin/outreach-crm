@@ -1,0 +1,212 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-14T00:00:00.000Z",
+  "title": "Design System: Longlist",
+  "extensions": {
+    "colorMeta": {
+      "working-indigo": {
+        "role": "primary",
+        "displayName": "Working Indigo",
+        "canonical": "#5b3df0",
+        "tonalRamp": ["#160f4a", "#241778", "#3524a8", "#4830d0", "#5b3df0", "#8f7cf5", "#bcaefa", "#e6e0fd"]
+      },
+      "glow-cyan": {
+        "role": "atmosphere",
+        "displayName": "Glow Cyan",
+        "canonical": "#00b4e0",
+        "tonalRamp": ["#00303d", "#004b5e", "#006d87", "#0090ae", "#00b4e0", "#4fd1f0", "#93e5f7", "#d3f5fc"]
+      },
+      "glow-pink": {
+        "role": "atmosphere",
+        "displayName": "Glow Pink",
+        "canonical": "#ff3d9a",
+        "tonalRamp": ["#4d0a29", "#731040", "#a3175c", "#d0207a", "#ff3d9a", "#ff7fbb", "#ffb3d8", "#ffe0ee"]
+      },
+      "status-confirmed": {
+        "role": "semantic-success",
+        "displayName": "Confirmed Emerald",
+        "canonical": "#059669",
+        "tonalRamp": ["#042f22", "#064a34", "#086b4a", "#0a8a60", "#059669", "#4cbe94", "#93dcc0", "#d6f2e6"]
+      },
+      "status-contacted": {
+        "role": "semantic-info",
+        "displayName": "Contacted Blue",
+        "canonical": "#2563eb",
+        "tonalRamp": ["#0d1f4d", "#123073", "#1a45a3", "#2154c9", "#2563eb", "#6f97f2", "#a9c1f8", "#dbe6fc"]
+      },
+      "status-responded": {
+        "role": "semantic-attention",
+        "displayName": "Responded Amber",
+        "canonical": "#d97706",
+        "tonalRamp": ["#402505", "#5f3608", "#87490a", "#b05f0c", "#d97706", "#eba552", "#f4c98f", "#fbe6c6"]
+      },
+      "status-negotiating": {
+        "role": "semantic-attention",
+        "displayName": "Negotiating Orange",
+        "canonical": "#ea580c",
+        "tonalRamp": ["#451a04", "#682706", "#953808", "#c1480a", "#ea580c", "#f28f57", "#f7b78f", "#fce0c9"]
+      },
+      "status-declined": {
+        "role": "semantic-danger",
+        "displayName": "Declined Red",
+        "canonical": "#dc2626",
+        "tonalRamp": ["#3f0a0a", "#5e0f0f", "#8a1616", "#b31e1e", "#dc2626", "#ea6c6c", "#f3a5a5", "#fbd8d8"]
+      },
+      "danger": {
+        "role": "semantic-danger",
+        "displayName": "Alert Red",
+        "canonical": "#ef4444",
+        "tonalRamp": ["#450a0a", "#651111", "#941b1b", "#c22a2a", "#ef4444", "#f37c7c", "#f7aeae", "#fcdcdc"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#17171f",
+        "tonalRamp": ["#050506", "#17171f", "#232330", "#3a3a4a", "#5c5c6b", "#74748a", "#c9c8d6", "#f5f5f7"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#050506", "#17171b", "#1e1e23", "#2b2b31", "#e4e2ec", "#eeedf6", "#f6f5fb", "#ffffff"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Home dashboard greeting only — one orientation moment per session." },
+      "headline": { "displayName": "Headline", "purpose": "Page h1s, subheader titles, inbox pane headers, dashboard card names." },
+      "title": { "displayName": "Title", "purpose": "Card titles, modal titles, template names, detail-card headers." },
+      "body": { "displayName": "Body", "purpose": "Default UI text, form inputs, notes, email body preview." },
+      "label": { "displayName": "Label", "purpose": "Stat labels, status tags, badges, tab counts, section eyebrows." }
+    },
+    "shadows": [
+      { "name": "resting-card", "value": "0 1px 3px rgba(23,18,40,0.07)", "purpose": "Default state for .card, .template-card, .settings-card, .project-row. Neutral, never accent-tinted." },
+      { "name": "card-hover", "value": "0 4px 12px rgba(0,0,0,0.1)", "purpose": "Hover feedback on clickable list/template cards. Deepens, doesn't colorize." },
+      { "name": "ambient-glow-btn", "value": "0 4px 14px -4px color-mix(in srgb, var(--accent) 45%, transparent)", "purpose": "Primary button, resting state. Deepens to 55% on hover." },
+      { "name": "ambient-glow-tight", "value": "0 0 12px -3px color-mix(in srgb, var(--accent) 55%, transparent)", "purpose": "Active status pill and attention-count badge — tighter radius than the button glow." },
+      { "name": "dropdown-topbar", "value": "0 20px 50px -12px rgba(60,30,110,.28)", "purpose": "Topbar user dropdown." },
+      { "name": "dropdown-inline", "value": "0 12px 30px -8px rgba(0,0,0,.2)", "purpose": "Inline person/context dropdown menus." },
+      { "name": "modal", "value": "0 20px 60px rgba(0,0,0,0.2)", "purpose": "Modal content over the dimmed overlay." },
+      { "name": "arrival-bloom-light", "value": "radial-gradient(960px 460px at 12% -10%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 62%), radial-gradient(880px 460px at 88% -6%, color-mix(in srgb, var(--glow-pink) 9%, transparent), transparent 64%), radial-gradient(820px 560px at 50% 14%, color-mix(in srgb, var(--glow-cyan) 8%, transparent), transparent 68%)", "purpose": "Home dashboard and Login page background, light theme only. Deliberately far more subtle than dark — a first pass at 30-46% made plain white project cards look like they were popping out; corrected after user feedback." },
+      { "name": "arrival-bloom-dark", "value": "radial-gradient(1200px 500px at 16% -130px, color-mix(in srgb, var(--accent) 36%, transparent), transparent 62%), radial-gradient(980px 460px at 90% -100px, color-mix(in srgb, var(--glow-cyan) 22%, transparent), transparent 64%)", "purpose": "Home dashboard and Login page background, dark theme only — two-tone, no pink." }
+    ],
+    "motion": [
+      { "name": "state-fast", "value": "0.1s ease", "purpose": "Button/link background and border-color transitions on hover." },
+      { "name": "state-standard", "value": "0.15s ease", "purpose": "Card shadow/border transitions, toggle thumb slide, chevron rotation." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main call-to-action — send, save, confirm. Carries the Ambient Glow shadow at rest.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Send Reply</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; border: none; cursor: pointer; transition: background 0.1s ease, box-shadow 0.1s ease; white-space: nowrap; } .ds-btn-primary { background: var(--accent, #5b3df0); color: #fff; box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--accent, #5b3df0) 45%, transparent); } .ds-btn-primary:hover { background: color-mix(in srgb, var(--accent, #5b3df0) 85%, black); box-shadow: 0 6px 18px -4px color-mix(in srgb, var(--accent, #5b3df0) 55%, transparent); } .ds-btn-primary:focus-visible { outline: 2px solid var(--accent, #5b3df0); outline-offset: 2px; } .ds-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary action — cancel, dismiss, back. No glow: not accent-colored at rest.",
+      "html": "<button class=\"ds-btn ds-btn-ghost\">Cancel</button>",
+      "css": ".ds-btn-ghost { background: transparent; color: #17171f; border: 1px solid #e4e2ec; padding: 7px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; cursor: pointer; transition: background 0.1s ease; } .ds-btn-ghost:hover { background: #f6f5fb; } .ds-btn-ghost:focus-visible { outline: 2px solid var(--accent, #5b3df0); outline-offset: 2px; }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Pipeline status indicator, one of five semantic colors plus neutral not_contacted. No glow — semantic status colors are separate from the accent.",
+      "html": "<span class=\"ds-badge ds-badge-confirmed\">Confirmed</span>",
+      "css": ".ds-badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 12px; font-weight: 500; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; } .ds-badge-confirmed { background: color-mix(in srgb, #059669 18%, #ffffff); color: color-mix(in srgb, #059669 65%, #17171f); }"
+    },
+    {
+      "name": "Active Status Pill",
+      "kind": "chip",
+      "refersTo": "status-tag-active",
+      "description": "The one status pill that IS accent-colored (project is currently active) rather than semantic — carries the tight Ambient Glow.",
+      "html": "<span class=\"ds-pill-active\">Active</span>",
+      "css": ".ds-pill-active { display: inline-block; padding: 2px 9px; border-radius: 9999px; font-size: 11px; font-weight: 600; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: color-mix(in srgb, var(--accent, #5b3df0) 10%, #ffffff); color: var(--accent, #5b3df0); box-shadow: 0 0 12px -3px color-mix(in srgb, var(--accent, #5b3df0) 55%, transparent); }"
+    },
+    {
+      "name": "Form Input",
+      "kind": "input",
+      "refersTo": "form-input",
+      "description": "Text field with accent focus ring.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Organization name\" />",
+      "css": ".ds-input { padding: 8px 12px; border: 1px solid #e4e2ec; border-radius: 8px; font-size: 14px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #ffffff; color: #17171f; width: 100%; box-sizing: border-box; transition: border-color 0.1s ease; } .ds-input:focus { outline: none; border-color: var(--accent, #5b3df0); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #5b3df0) 10%, #ffffff); } .ds-input::placeholder { color: #5c5c6b; }"
+    },
+    {
+      "name": "Nav Link (active)",
+      "kind": "nav",
+      "refersTo": "nav-link",
+      "description": "Topbar navigation item, showing the active/current-page state.",
+      "html": "<a class=\"ds-nav-link ds-nav-link-active\" href=\"#\">Dashboard</a>",
+      "css": ".ds-nav-link { padding: 6px 13px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 13px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #5c5c6b; transition: background 0.1s ease, color 0.1s ease; } .ds-nav-link:hover { background: #f6f5fb; color: #17171f; } .ds-nav-link-active { background: color-mix(in srgb, var(--accent, #5b3df0) 10%, #ffffff); color: var(--accent, #5b3df0); font-weight: 600; }"
+    },
+    {
+      "name": "Pipeline Bar",
+      "kind": "custom",
+      "refersTo": "pipeline-bar",
+      "description": "Signature Unified Desk component — the six-stage status breakdown for one project, with an org-count readout above and color-dot tags below (widened and enlarged after user feedback that the first pass was too small and cramped).",
+      "html": "<div class=\"ds-pipeline\"><span class=\"ds-pipeline-total\">29 organizations</span><div class=\"ds-pipeline-bar\"><div style=\"flex-grow:9;background:#2563eb\"></div><div style=\"flex-grow:5;background:#ea580c\"></div><div style=\"flex-grow:6;background:#059669\"></div></div><div class=\"ds-pipeline-tags\"><span class=\"ds-ptag\"><span class=\"ds-dot\" style=\"background:#059669\"></span>6 confirmed</span><span class=\"ds-ptag\"><span class=\"ds-dot\" style=\"background:#ea580c\"></span>5 negotiating</span></div></div>",
+      "css": ".ds-pipeline { display: flex; flex-direction: column; gap: 10px; width: 272px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; } .ds-pipeline-total { font-size: 13.5px; font-weight: 700; color: #17171f; } .ds-pipeline-bar { display: flex; gap: 2px; height: 12px; border-radius: 6px; overflow: hidden; background: #e4e2ec; } .ds-pipeline-tags { display: flex; flex-wrap: wrap; gap: 6px 12px; } .ds-ptag { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #5c5c6b; } .ds-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }"
+    },
+    {
+      "name": "Kanban Card",
+      "kind": "custom",
+      "refersTo": "board-card",
+      "description": "Signature Unified Desk component — a pipeline-stage card carrying status, category, and a contact avatar, opening directly into the org's real thread.",
+      "html": "<div class=\"ds-board-card\"><div class=\"ds-board-card-top\"><span class=\"ds-board-card-category\">Gold Tier</span><span class=\"ds-board-card-date\">Jul 12</span></div><div class=\"ds-board-card-name\">Acme Robotics</div><div class=\"ds-board-card-ask\">$5,000 ask</div><div class=\"ds-board-card-footer\"><span class=\"ds-board-card-avatar\">JD</span><span class=\"ds-board-card-contact\">jane@acme.com</span></div></div>",
+      "css": ".ds-board-card { background: #ffffff; border: 1px solid #e4e2ec; border-radius: 11px; padding: 12px 13px; cursor: grab; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; transition: border-color 0.15s ease; } .ds-board-card:hover { border-color: color-mix(in srgb, var(--accent, #5b3df0) 28%, #ffffff); } .ds-board-card-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; } .ds-board-card-category { font-size: 10px; color: #5c5c6b; background: #eeedf6; border-radius: 5px; padding: 1px 6px; } .ds-board-card-date { font-size: 10.5px; color: #74748a; } .ds-board-card-name { font-size: 13px; font-weight: 600; color: #17171f; margin-bottom: 3px; } .ds-board-card-ask { font-size: 11.5px; color: #5c5c6b; margin-bottom: 8px; } .ds-board-card-footer { display: flex; align-items: center; gap: 7px; } .ds-board-card-avatar { width: 22px; height: 22px; border-radius: 50%; background: #5b3df0; color: #fff; font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0; } .ds-board-card-contact { font-size: 11.5px; color: #5c5c6b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }"
+    },
+    {
+      "name": "Org Row (status dot)",
+      "kind": "custom",
+      "refersTo": "inbox-org-row",
+      "description": "Signature Unified Desk component — the inbox sidebar row that keeps pipeline status visible without ever leaving the correspondence view.",
+      "html": "<button class=\"ds-org-row\"><span class=\"ds-org-dot\"></span><span class=\"ds-org-info\"><span class=\"ds-org-name\">Acme Robotics</span><span class=\"ds-org-meta\">Negotiating · 2 threads</span></span></button>",
+      "css": ".ds-org-row { width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px 16px; border: none; background: none; cursor: pointer; text-align: left; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; } .ds-org-row:hover { background: #f6f5fb; } .ds-org-dot { width: 8px; height: 8px; border-radius: 50%; background: #ea580c; flex-shrink: 0; } .ds-org-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; } .ds-org-name { font-size: 13px; font-weight: 600; color: #17171f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-org-meta { font-size: 11.5px; color: #5c5c6b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Unified Desk",
+    "overview": "Longlist exists because status tracking and actual correspondence are usually two separate tools — a spreadsheet in one tab, Gmail in another. The Unified Desk means every screen puts both on the same surface: the structured layer (project → category → org, status pipeline, kanban columns) is never more than one glance or one click from the real email thread it describes. Board view, inbox view, and dashboard are three lenses on the same underlying data, not three destinations. The visual language carries that job with more confidence than the original MVP skin: crisp and fast, but with a cinematic, keynote-stage polish — a richer violet accent, a soft multi-hue glow on arrival screens, and a deliberate glow on the handful of elements that are actually colored. It still explicitly rejects the cutesy-consumer-app register: no illustration, no mascots, no emoji-driven UI. The richness lives in light, color, and glow — never in ornament.",
+    "keyCharacteristics": [
+      "Every status signal (badge, dot, column) sits beside a direct path into the real thread — never status-only, never email-only",
+      "Dense by design on working screens: a long list is meant to look long, not padded out to feel spacious",
+      "Cards stay flat and quiet; glow is reserved for colored, functional elements — never a plain surface",
+      "Arrival screens (Home, Login) carry a soft multi-hue background bloom; dense working screens stay plain",
+      "One accent color carries all functional signal; two fixed atmosphere hues (cyan, pink) live only in the background bloom",
+      "Two-voice typography: Space Grotesk for identity/orientation moments, plain system sans for everything the user actually works in"
+    ],
+    "rules": [
+      { "name": "The Working Indigo Rule", "body": "The accent appears only on primary actions, current selection, and functional status signal. It is never used purely decoratively. If a use of the accent can't be explained as \"this is clickable\" or \"this is currently selected,\" it's wrong.", "section": "colors" },
+      { "name": "The One Desk Rule", "body": "A status color never appears without a path to the thread it describes, within one click. A kanban card, org row, or dashboard tile that shows status but not a route into the actual email fails this rule.", "section": "colors" },
+      { "name": "The Two-Voice Rule", "body": "Space Grotesk appears only in headings and identity moments. The moment a font choice reaches a button, badge, table cell, or form control, it must be the system sans.", "section": "typography" },
+      { "name": "The Flat-by-Default Rule", "body": "Nothing floats at rest if it's a plain surface. A shadow on a neutral card is only correct as a direct response to hover or to leaving the page's normal stacking context.", "section": "elevation" },
+      { "name": "The Ambient Glow Rule", "body": "A resting (non-hover) shadow is only correct on an element that is itself accent-colored — never on a neutral surface, and never as decoration on something that isn't already functionally \"the colored thing\" on screen.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep the accent to primary actions, current selection, and status/functional signal only — never pure decoration",
+      "Do pair every status indicator with a one-click path to the real email thread it describes",
+      "Do leave cards and surfaces flat at rest; shadow there only on hover or for floating/overlay elements",
+      "Do give accent-colored functional elements a soft resting glow — primary buttons, active status pills, count badges",
+      "Do keep the arrival-screen bloom to Home and Login only; dense working screens stay plain",
+      "Do keep light mode's arrival bloom far more subtle than dark's (8-13% vs 22-36%) — they are deliberately asymmetric, not mirrored",
+      "Do default every new session to light mode, unless the user has explicitly chosen dark before",
+      "Do keep Space Grotesk confined to headings and identity moments; system sans everywhere functional",
+      "Do derive semantic and status colors via color-mix() toward surface/text rather than fixed hex values"
+    ],
+    "donts": [
+      "Don't add illustration, mascots, or emoji-driven UI",
+      "Don't put a glow or colored shadow on a plain white/dark card — glow belongs on colored elements only",
+      "Don't use border-left/border-right greater than 1px as a colored accent stripe on cards or list rows",
+      "Don't add decorative motion — motion here exists only to convey state",
+      "Don't introduce a second display font, or pair Space Grotesk with anything other than the system sans",
+      "Don't let the Atmosphere hues (Glow Cyan, Glow Pink) leak onto functional UI — they exist only inside the arrival bloom",
+      "Don't reintroduce a user-facing accent color picker — the accent is fixed by deliberate choice",
+      "Don't default a first-time session to the OS's dark-mode preference — light is the fixed default",
+      "Don't hide an org or thread behind pagination or an archive that removes it from every list/board view"
+    ]
+  }
+}

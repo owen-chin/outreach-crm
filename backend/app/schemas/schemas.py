@@ -290,6 +290,7 @@ class ProjectDashboardOut(BaseModel):
     category_count: int
     outreach_pct: float
     updated_at: datetime
+    status_counts: dict[str, int]
 
 
 class DashboardOut(BaseModel):

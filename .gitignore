@@ -15,3 +15,7 @@ frontend/dist/
 
 # Claude Code
 .claude/
+.github/hooks/
+.github/skills/
+.impeccable/config.local.json
+.impeccable/hook.cache.json
