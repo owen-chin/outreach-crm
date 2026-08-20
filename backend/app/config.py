@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-flash-lite-latest"
     internal_api_secret: str = ""
+    token_encryption_key: str = ""
 
     model_config = {"env_file": ".env"}
 

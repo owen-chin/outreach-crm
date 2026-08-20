@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Form, UploadFile, File, Response
+from fastapi import APIRouter, Depends, HTTPException, Form, UploadFile, File, Response, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -10,6 +10,7 @@ from app.schemas.schemas import DraftOut, DraftAttachmentOut, AIDraftChatRequest
 from app.services.auth_utils import get_current_user
 from app.services.ownership import get_owned_org
 from app.services.ai_draft import generate_chat_reply, AIDraftQuotaExceeded
+from app.services.rate_limit import limiter
 
 router = APIRouter(prefix="/api/organizations/{org_id}/drafts", tags=["drafts"])
 
@@ -119,7 +120,8 @@ async def upsert_draft(
 
 
 @router.post("/ai-draft", response_model=AIDraftChatResponse)
-def ai_draft(org_id: int, payload: AIDraftChatRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+@limiter.limit("10/minute")
+def ai_draft(request: Request, org_id: int, payload: AIDraftChatRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     org = get_owned_org(db, org_id, current_user)
 
     if not payload.messages:

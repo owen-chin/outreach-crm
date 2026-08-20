@@ -1,6 +1,6 @@
 import json
 from urllib.parse import quote
-from fastapi import APIRouter, Depends, HTTPException, Form, UploadFile, File, Response
+from fastapi import APIRouter, Depends, HTTPException, Form, UploadFile, File, Response, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -14,6 +14,7 @@ from app.services.auth_utils import get_current_user
 from app.services.ownership import get_owned_org
 from app.services.gmail import get_credentials, get_thread, get_attachment_bytes
 from app.services.email_sender import apply_org_label, resolve_reply_recipient, send_and_log_email
+from app.services.rate_limit import limiter
 
 router = APIRouter(prefix="/api/organizations/{org_id}/threads", tags=["threads"])
 
@@ -51,7 +52,9 @@ def list_threads(org_id: int, db: Session = Depends(get_db), current_user: User 
 
 
 @router.post("/start-email", response_model=SendEmailResponse, status_code=201)
+@limiter.limit("30/minute")
 async def start_email(
+    request: Request,
     org_id: int,
     to_person_id: int = Form(...),
     cc_person_ids: str = Form("[]"),
@@ -198,7 +201,9 @@ def get_thread_logs(org_id: int, thread_id: int, db: Session = Depends(get_db), 
 
 
 @router.post("/{thread_id}/reply", response_model=SendEmailResponse, status_code=201)
+@limiter.limit("30/minute")
 async def reply_to_thread(
+    request: Request,
     org_id: int,
     thread_id: int,
     cc_person_ids: str = Form("[]"),

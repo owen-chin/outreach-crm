@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.models import OAuthToken
 from app.config import settings
+from app.services.crypto import encrypt_str, decrypt_str
 
 SCOPES = [
     "openid",
@@ -29,9 +30,12 @@ def get_credentials(db: Session, user_id: int) -> Credentials | None:
     if not row:
         return None
 
+    raw_token = row.token_data.get("token")
+    raw_refresh = row.token_data.get("refresh_token")
+
     creds = Credentials(
-        token=row.token_data.get("token"),
-        refresh_token=row.token_data.get("refresh_token"),
+        token=decrypt_str(raw_token) if raw_token else None,
+        refresh_token=decrypt_str(raw_refresh) if raw_refresh else None,
         token_uri=row.token_data.get("token_uri", "https://oauth2.googleapis.com/token"),
         client_id=settings.google_client_id,
         client_secret=settings.google_client_secret,
@@ -40,7 +44,7 @@ def get_credentials(db: Session, user_id: int) -> Credentials | None:
 
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        row.token_data = {**row.token_data, "token": creds.token}
+        row.token_data = {**row.token_data, "token": encrypt_str(creds.token)}
         db.commit()
 
     return creds
@@ -48,8 +52,8 @@ def get_credentials(db: Session, user_id: int) -> Credentials | None:
 
 def save_credentials(db: Session, user_id: int, creds: Credentials) -> None:
     token_data = {
-        "token": creds.token,
-        "refresh_token": creds.refresh_token,
+        "token": encrypt_str(creds.token) if creds.token else None,
+        "refresh_token": encrypt_str(creds.refresh_token) if creds.refresh_token else None,
         "token_uri": creds.token_uri,
         "scopes": list(creds.scopes) if creds.scopes else SCOPES,
     }
