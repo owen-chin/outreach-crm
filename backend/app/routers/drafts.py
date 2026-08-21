@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Form, UploadFile, File, Response, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Form, UploadFile, File, Response, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -10,6 +10,7 @@ from app.schemas.schemas import DraftOut, DraftAttachmentOut, AIDraftChatRequest
 from app.services.auth_utils import get_current_user
 from app.services.ownership import get_owned_org
 from app.services.ai_draft import generate_chat_reply, AIDraftQuotaExceeded
+from app.services.github_actions import sync_workflow_schedule
 from app.services.rate_limit import limiter
 
 router = APIRouter(prefix="/api/organizations/{org_id}/drafts", tags=["drafts"])
@@ -49,6 +50,7 @@ def get_draft(org_id: int, thread_id: Optional[int] = None, db: Session = Depend
 @router.put("", response_model=DraftOut)
 async def upsert_draft(
     org_id: int,
+    background_tasks: BackgroundTasks,
     thread_id: Optional[int] = Form(None),
     to_person_id: Optional[int] = Form(None),
     cc_person_ids: str = Form("[]"),
@@ -88,6 +90,8 @@ async def upsert_draft(
         if thread_id is None and (not subject or not subject.strip() or not to_person_id):
             raise HTTPException(status_code=400, detail="Subject and recipient are required to schedule a send")
 
+    was_scheduled = draft is not None and draft.status == DraftStatus.scheduled
+
     if not draft:
         draft = EmailDraft(organization_id=org_id, thread_id=thread_id)
         db.add(draft)
@@ -116,6 +120,8 @@ async def upsert_draft(
 
     db.commit()
     db.refresh(draft)
+    if was_scheduled != (draft.status == DraftStatus.scheduled):
+        background_tasks.add_task(sync_workflow_schedule)
     return _to_draft_out(draft)
 
 
@@ -156,13 +162,16 @@ def ai_draft(request: Request, org_id: int, payload: AIDraftChatRequest, db: Ses
 
 
 @router.delete("/{draft_id}", status_code=204)
-def delete_draft(org_id: int, draft_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def delete_draft(org_id: int, draft_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     get_owned_org(db, org_id, current_user)
     draft = db.query(EmailDraft).filter(EmailDraft.id == draft_id, EmailDraft.organization_id == org_id).first()
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
+    was_scheduled = draft.status == DraftStatus.scheduled
     db.delete(draft)
     db.commit()
+    if was_scheduled:
+        background_tasks.add_task(sync_workflow_schedule)
 
 
 @router.get("/{draft_id}/attachments/{attachment_id}")

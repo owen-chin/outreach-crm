@@ -8,6 +8,7 @@ from app.models.models import EmailDraft, DraftStatus, Organization, Thread, Per
 from app.services.gmail import get_credentials
 from app.services.ownership import get_owning_user_id
 from app.services.email_sender import send_and_log_email, resolve_reply_recipient
+from app.services.github_actions import sync_workflow_schedule
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,9 @@ def send_due_drafts(db: Session) -> list[dict]:
         .filter(EmailDraft.status == DraftStatus.scheduled, EmailDraft.send_at <= now)
         .all()
     ]
-    return [_send_one_draft(db, draft_id) for draft_id in due_ids]
+    results = [_send_one_draft(db, draft_id) for draft_id in due_ids]
+    sync_workflow_schedule()
+    return results
 
 
 def _send_one_draft(db: Session, draft_id: int) -> dict:
